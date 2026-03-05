@@ -1,11 +1,12 @@
-﻿using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.DirectXDisassembler;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.DirectXDisassembler;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL;
 using AssetRipper.Primitives;
-using AssetsTools.NET;
 using Ryujinx.Graphics.Shader.Translation;
-using USCSandbox;
+using System;
+using System.Buffers.Binary;
+using System.IO;
 using USCSandbox.Processor;
 using USCSandbox.UltraShaderConverter.NVN;
 using USCSandbox.UltraShaderConverter.UShader.NVN;
@@ -23,7 +24,13 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter
         public void LoadDirectXCompiledShader(Stream data, GPUPlatform graphicApi, UnityVersion version)
         {
             int offset = GetDirectXDataOffset(version, graphicApi, data.ReadByte());
-            var trimmedData = new SegmentStream(data, offset);
+            data.Position = offset;
+            
+            // Read the remainder into a clean stream for DX decompilation
+            MemoryStream trimmedData = new MemoryStream();
+            data.CopyTo(trimmedData);
+            trimmedData.Position = 0;
+            
             DxShader = new DirectXCompiledShader(trimmedData);
         }
 
@@ -38,135 +45,142 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter
                 {
                     offset += 0x20;
                 }
-
                 return offset;
             }
-            else
-            {
-                return 0;
-            }
+            return 0;
         }
 
         public void LoadUnityNvnShader(Stream data, GPUPlatform graphicApi, UnityVersion version)
         {
-            byte[] fTest = new byte[8];
+            Span<byte> tmpBuf = stackalloc byte[8];
             data.Position = 8;
-            data.Read(fTest, 0, 8);
+            data.Read(tmpBuf);
 
-            if (BitConverter.ToInt64(fTest) == -1)
+            var opt = new TranslationOptions(TargetLanguage.Glsl, TargetApi.OpenGL, TranslationFlags.None);
+
+            if (BinaryPrimitives.ReadInt64LittleEndian(tmpBuf) == -1)
             {
                 // newer merged version
-                data.Position = 0x18;
-                BinaryReader br = new BinaryReader(data);
+                const int MAX_STAGE_COUNT = 6;
+                const int FIELD_COUNT = 4;
+                const int ROW_LEN = MAX_STAGE_COUNT * sizeof(int);
+                const int START_OF_SHADER_DATA = ROW_LEN * FIELD_COUNT;
+                const int SWITCH_DATA_OFFSET = 0x30;
 
-                uint shaderFragOffset = br.ReadUInt32();
-                uint shaderVertOffset = br.ReadUInt32();
-                data.Position += 16;
-                uint shaderFragDataOffset = br.ReadUInt32();
-                uint shaderVertDataOffset = br.ReadUInt32();
-                data.Position += 16;
-                uint shaderFragFlags = br.ReadUInt32();
-                uint shaderVertFlags = br.ReadUInt32();
-                data.Position += 16;
+                Span<byte> mergedHeader = new byte[ROW_LEN * FIELD_COUNT];
+                data.Position = 0;
+                data.Read(mergedHeader);
 
-                long basePosition = data.Position;
+                TranslatorContext? vertCtx = null;
+                TranslatorContext? fragCtx = null;
 
-                const int SECOND_OFFSET = 0x30;
-                long shaderVertPosition = basePosition + shaderVertOffset + shaderVertDataOffset + SECOND_OFFSET;
-                long shaderFragPosition = basePosition + shaderFragOffset + shaderFragDataOffset + SECOND_OFFSET;
-                int shaderVertLength = (int)(shaderFragPosition - shaderVertPosition);
-                int shaderFragLength = (int)(data.Length - shaderFragPosition);
+                for (int i = 0; i < MAX_STAGE_COUNT; i++)
+                {
+                    int baseOff = i * sizeof(int);
+                    int dataStartPos = baseOff + ROW_LEN * 1;
+                    int dataStart = BinaryPrimitives.ReadInt32LittleEndian(mergedHeader.Slice(dataStartPos, sizeof(int)));
+                    
+                    if (dataStart == -1) continue;
 
-                data.Position = shaderFragPosition;
-                byte[] fragBytes = br.ReadBytes(shaderFragLength);
-                data.Position = shaderVertPosition;
-                byte[] vertBytes = br.ReadBytes(shaderVertLength);
+                    int headerLenPos = baseOff + ROW_LEN * 2;
+                    int headerLen = BinaryPrimitives.ReadInt32LittleEndian(mergedHeader.Slice(headerLenPos, sizeof(int)));
 
-                dbgData1 = vertBytes;
-                dbgData2 = fragBytes;
+                    int storageFlagsPos = baseOff + ROW_LEN * 3;
+                    uint shaderBodyLen = BinaryPrimitives.ReadUInt32LittleEndian(mergedHeader.Slice(storageFlagsPos, sizeof(uint)));
 
-                TranslationOptions opt = new TranslationOptions(TargetLanguage.Glsl, TargetApi.OpenGL, TranslationFlags.None);
-                TranslatorContext fragCtx = Translator.CreateContext(0, new GpuAccessor(fragBytes), opt);
-                TranslatorContext vertCtx = Translator.CreateContext(0, new GpuAccessor(vertBytes), opt);
+                    byte[] stageBody = new byte[shaderBodyLen - SWITCH_DATA_OFFSET];
+                    data.Position = START_OF_SHADER_DATA + dataStart + headerLen + SWITCH_DATA_OFFSET;
+                    data.Read(stageBody, 0, stageBody.Length);
+
+                    var ctx = Translator.CreateContext(0, new GpuAccessor(stageBody), opt);
+                    
+                    if (i == 0)
+                    {
+                        vertCtx = ctx;
+                        dbgData1 = stageBody;
+                    }
+                    else if (i == 1)
+                    {
+                        fragCtx = ctx;
+                        dbgData2 = stageBody;
+                    }
+                }
 
                 NvnShader = new NvnUnityShader(vertCtx, fragCtx);
             }
             else
             {
-                throw new Exception("old format not supported");
                 // older separated version
+                const int HEADER_SIZE = 0x10;
+                const int START_OF_SHADER_DATA = HEADER_SIZE;
+                const int SWITCH_DATA_OFFSET = 0x30;
+
+                Span<byte> singleHeader = new byte[HEADER_SIZE];
+                data.Position = 0;
+                data.Read(singleHeader);
+
+                int kind = BinaryPrimitives.ReadInt32LittleEndian(singleHeader.Slice(0, sizeof(int)));
+                int headerLen = BinaryPrimitives.ReadInt32LittleEndian(singleHeader.Slice(8, sizeof(int)));
+                uint shaderBodyLen = BinaryPrimitives.ReadUInt32LittleEndian(singleHeader.Slice(12, sizeof(uint)));
+
+                byte[] stageBody = new byte[shaderBodyLen - SWITCH_DATA_OFFSET];
+                data.Position = START_OF_SHADER_DATA + headerLen + SWITCH_DATA_OFFSET;
+                data.Read(stageBody, 0, stageBody.Length);
+
+                var ctx = Translator.CreateContext(0, new GpuAccessor(stageBody), opt);
+                
+                if (kind == 0) NvnShader = new NvnUnityShader(ctx);
+                else if (kind == 1) NvnShader = new NvnUnityShader(null, ctx);
+                else NvnShader = new NvnUnityShader(ctx); // fallback
             }
         }
 
         public void ConvertDxShaderToUShaderProgram()
         {
-            if (DxShader == null)
-            {
-                throw new Exception($"You need to call {nameof(LoadDirectXCompiledShader)} first!");
-            }
+            if (DxShader == null) throw new Exception($"You need to call {nameof(LoadDirectXCompiledShader)} first!");
 
             DirectXProgramToUSIL dx2UsilConverter = new DirectXProgramToUSIL(DxShader);
             dx2UsilConverter.Convert();
-
             ShaderProgram = dx2UsilConverter.shader;
         }
 
-        // type is ignored if shader is not combined
         public void ConvertNvnShaderToUShaderProgram(ShaderGpuProgramType type)
         {
-            if (NvnShader == null)
-            {
-                throw new Exception($"You need to call {nameof(LoadUnityNvnShader)} first!");
-            }
+            if (NvnShader == null) throw new Exception($"You need to call {nameof(LoadUnityNvnShader)} first!");
 
             TranslatorContext? ctx = null;
             if (NvnShader.CombinedShader)
             {
-                if (type == ShaderGpuProgramType.ConsoleVS)
-                {
-                    ctx = NvnShader.VertShader;
-                }
-                else if (type == ShaderGpuProgramType.ConsoleFS)
-                {
-                    ctx = NvnShader.FragShader;
-                }
-                else
-                {
-                    throw new NotSupportedException("Only vertex and fragment shaders are supported at the moment!");
-                }
+                if (type == ShaderGpuProgramType.ConsoleVS) ctx = NvnShader.VertShader;
+                else if (type == ShaderGpuProgramType.ConsoleFS) ctx = NvnShader.FragShader;
+                else throw new NotSupportedException("Only vertex and fragment shaders are supported at the moment!");
             }
             else
             {
-                ctx = NvnShader.OnlyShader;
+                ctx = NvnShader.OnlyShader ?? NvnShader.VertShader ?? NvnShader.FragShader;
             }
 
-            if (ctx == null)
-            {
-                throw new Exception("Shader type not found!");
-            }
+            if (ctx == null) throw new Exception("Shader type not found!");
 
             NvnProgramToUSIL nvn2UsilConverter = new NvnProgramToUSIL(ctx);
             nvn2UsilConverter.Convert();
-
             ShaderProgram = nvn2UsilConverter.shader;
         }
 
         public void ApplyMetadataToProgram(ShaderSubProgram subProgram, ShaderParams shaderParams, UnityVersion version)
         {
-            if (ShaderProgram == null)
-            {
-                throw new Exception($"You need to call {nameof(ConvertDxShaderToUShaderProgram)} first!");
-            }
+            if (ShaderProgram == null) throw new Exception("You need to convert the shader first!");
 
             ShaderGpuProgramType shaderProgramType = subProgram.GetProgramType(version);
 
-            bool isVertex = shaderProgramType == ShaderGpuProgramType.DX11VertexSM40 || shaderProgramType == ShaderGpuProgramType.DX11VertexSM50 || shaderProgramType == ShaderGpuProgramType.ConsoleVS;
-            bool isFragment = shaderProgramType == ShaderGpuProgramType.DX11PixelSM40 || shaderProgramType == ShaderGpuProgramType.DX11PixelSM50 || shaderProgramType == ShaderGpuProgramType.ConsoleVS || shaderProgramType == ShaderGpuProgramType.ConsoleFS;
+            bool isVertex = shaderProgramType == ShaderGpuProgramType.DX11VertexSM40 || 
+                            shaderProgramType == ShaderGpuProgramType.DX11VertexSM50 || 
+                            shaderProgramType == ShaderGpuProgramType.ConsoleVS;
+            bool isFragment = shaderProgramType == ShaderGpuProgramType.DX11PixelSM40 || 
+                              shaderProgramType == ShaderGpuProgramType.DX11PixelSM50 || 
+                              shaderProgramType == ShaderGpuProgramType.ConsoleFS;
 
-            if (!isVertex && !isFragment)
-            {
-                throw new NotSupportedException("Only vertex and fragment shaders are supported at the moment!");
-            }
+            if (!isVertex && !isFragment) throw new NotSupportedException("Only vertex and fragment shaders are supported at the moment!");
 
             ShaderProgram.shaderFunctionType = isVertex ? UShaderFunctionType.Vertex : UShaderFunctionType.Fragment;
 
