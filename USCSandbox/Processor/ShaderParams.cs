@@ -1,5 +1,7 @@
-﻿using AssetRipper.Primitives;
+using AssetRipper.Primitives;
 using AssetsTools.NET;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace USCSandbox.Processor
 {
@@ -20,10 +22,15 @@ namespace USCSandbox.Processor
             {
                 var blobVersion = r.ReadInt32();
             }
+
+            // Read Constant Buffer groups
             var firstParamsCount = r.ReadInt32();
             if (firstParamsCount > 0)
             {
+                // The first buffer is usually the "Globals" or base buffer
                 BaseConstantBuffer = new ConstantBuffer(r, engVer);
+                
+                // The subsequent buffers are standard named Constant Buffers
                 ConstantBuffers = new List<ConstantBuffer>(firstParamsCount - 1);
                 for (var i = 1; i < firstParamsCount; i++)
                 {
@@ -35,12 +42,14 @@ namespace USCSandbox.Processor
                 ConstantBuffers = new List<ConstantBuffer>(0);
             }
 
+            // Initialize lists for other resources
             TextureParameters = new List<TextureParameter>();
             ConstBindings = new List<BufferBinding>();
             Buffers = new List<BufferBinding>();
             UAVs = new List<UAVParameter>();
             Samplers = new List<SamplerParameter>();
 
+            // Read Resources (Textures, Buffers, UAVs, Samplers)
             var secondParamsCount = r.ReadInt32();
             for (var i = 0; i < secondParamsCount; i++)
             {
@@ -49,23 +58,23 @@ namespace USCSandbox.Processor
 
                 var type = r.ReadInt32();
 
-                if (type == 0)
+                if (type == 0) // Texture
                 {
                     TextureParameters.Add(new TextureParameter(r, engVer, name));
                 }
-                else if (type == 1)
+                else if (type == 1) // Constant Buffer Binding
                 {
                     ConstBindings.Add(new BufferBinding(r, name));
                 }
-                else if (type == 2)
+                else if (type == 2) // Buffer
                 {
                     Buffers.Add(new BufferBinding(r, name));
                 }
-                else if (type == 3)
+                else if (type == 3) // UAV
                 {
                     UAVs.Add(new UAVParameter(r, name));
                 }
-                else if (type == 4)
+                else if (type == 4) // Sampler
                 {
                     Samplers.Add(new SamplerParameter(r));
                 }
@@ -74,21 +83,42 @@ namespace USCSandbox.Processor
 
         public void CombineCommon(SerializedProgramInfo progInfo)
         {
-            List<ConstantBuffer> commonCBuffers = progInfo.CommonCBuffers;
-            List<BufferBinding> commonConstBindings = progInfo.CommonCBBindings;
-
-            foreach (var commonCBuf in commonCBuffers)
+            // Merge Common Constant Buffers (e.g., UnityPerDraw, UnityPerFrame)
+            foreach (var commonCBuf in progInfo.CommonCBuffers)
             {
-                if (commonCBuf.Partial)
+                var existing = ConstantBuffers.FirstOrDefault(c => c.Name == commonCBuf.Name);
+                if (existing != null)
                 {
-                    var insertInto = ConstantBuffers.FirstOrDefault(c => c.Name == commonCBuf.Name);
-                    insertInto?.CBParams.AddRange(commonCBuf.CBParams);
+                    // If the local buffer is marked partial, and the common one has data, 
+                    // we prefer the common one as it often contains the full struct definition.
+                    if (existing.Partial && commonCBuf.CBParams.Count > existing.CBParams.Count)
+                    {
+                        existing.CBParams = commonCBuf.CBParams;
+                    }
+                }
+                else
+                {
+                    ConstantBuffers.Add(commonCBuf);
                 }
             }
 
-            ConstBindings.AddRange(commonConstBindings);
+            // Merge Common Texture Parameters
+            foreach (var commonTex in progInfo.CommonTextureParameters)
+            {
+                if (!TextureParameters.Any(t => t.Name == commonTex.Name))
+                {
+                    TextureParameters.Add(commonTex);
+                }
+            }
 
-            TextureParameters.AddRange(progInfo.CommonTextureParameters);
+            // Merge Common Buffer Bindings
+            foreach (var commonBind in progInfo.CommonCBBindings)
+            {
+                if (!ConstBindings.Any(b => b.Name == commonBind.Name))
+                {
+                    ConstBindings.Add(commonBind);
+                }
+            }
         }
     }
 }
