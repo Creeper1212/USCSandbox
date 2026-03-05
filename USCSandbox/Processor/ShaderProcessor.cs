@@ -1,4 +1,4 @@
-﻿using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
 using AssetRipper.Primitives;
@@ -41,35 +41,33 @@ namespace USCSandbox.Processor
 
             var selectedIndex = platforms.IndexOf((int)_platformId);
             
-            uint selectedOffset;
-            if (offsets[selectedIndex].Children.Count > 0)
-                selectedOffset = offsets[selectedIndex]["Array"][0].AsUInt;
-            else
-                selectedOffset = offsets[selectedIndex].AsUInt;
-            
-            uint selectedCompressedLength;
-            if (compressedLengths[selectedIndex].Children.Count > 0)
-                selectedCompressedLength = compressedLengths[selectedIndex]["Array"][0].AsUInt;
-            else
-                selectedCompressedLength = compressedLengths[selectedIndex].AsUInt;
-            
-            uint selectedDecompressedLength;
-            if (offsets[selectedIndex].Children.Count > 0)
-                selectedDecompressedLength = decompressedLengths[selectedIndex]["Array"][0].AsUInt;
-            else
-                selectedDecompressedLength = decompressedLengths[selectedIndex].AsUInt;
-
-            var decompressedBlob = new byte[selectedDecompressedLength];
-            var lz4Decoder = new Lz4DecoderStream(new MemoryStream(compressedBlob));
-            lz4Decoder.Read(decompressedBlob, 0, (int)selectedDecompressedLength);
-            lz4Decoder.Dispose();
-
-            var blobManager = new BlobManager(decompressedBlob, _engVer);
-            for (var i = 0; i < blobManager.Entries.Count; i++)
+            if (selectedIndex == -1)
             {
-                var entryBytes = blobManager.GetRawEntry(i);
-                File.WriteAllBytes($"dbg_entry_{i}.bin", entryBytes);
+                return $"// Shader does not contain platform: {_platformId}\n";
             }
+
+            // Unity 2019.3+ splits shaders into segments. We check if the elements contain arrays.
+            bool hasSegments = offsets[selectedIndex].Children.Count > 0;
+            int segmentCount = hasSegments ? offsets[selectedIndex]["Array"].Children.Count : 1;
+
+            byte[][] decompressedBlobs = new byte[segmentCount][];
+            for (int i = 0; i < segmentCount; i++)
+            {
+                uint selectedOffset = hasSegments ? offsets[selectedIndex]["Array"][i].AsUInt : offsets[selectedIndex].AsUInt;
+                uint selectedCompressedLength = hasSegments ? compressedLengths[selectedIndex]["Array"][i].AsUInt : compressedLengths[selectedIndex].AsUInt;
+                uint selectedDecompressedLength = hasSegments ? decompressedLengths[selectedIndex]["Array"][i].AsUInt : decompressedLengths[selectedIndex].AsUInt;
+
+                decompressedBlobs[i] = new byte[selectedDecompressedLength];
+                
+                // Read from the exact offset within the compressed blob
+                using (var compStream = new MemoryStream(compressedBlob, (int)selectedOffset, (int)selectedCompressedLength))
+                using (var lz4Decoder = new Lz4DecoderStream(compStream))
+                {
+                    lz4Decoder.Read(decompressedBlobs[i], 0, (int)selectedDecompressedLength);
+                }
+            }
+
+            var blobManager = new BlobManager(decompressedBlobs, _engVer);
 
             _sb.AppendLine($"Shader \"{name}\" {{");
             _sb.Indent();
@@ -112,8 +110,8 @@ namespace USCSandbox.Processor
                 .ToList();
 
             var subPrograms = basketsInfo.Select(x => x.subProg).ToList();
-            ShaderGpuProgramType[] vertTypes = [ShaderGpuProgramType.DX11VertexSM40, ShaderGpuProgramType.ConsoleVS];
-            ShaderGpuProgramType[] fragTypes = [ShaderGpuProgramType.DX11PixelSM40, ShaderGpuProgramType.ConsoleFS];
+            ShaderGpuProgramType[] vertTypes =[ShaderGpuProgramType.DX11VertexSM40, ShaderGpuProgramType.ConsoleVS];
+            ShaderGpuProgramType[] fragTypes =[ShaderGpuProgramType.DX11PixelSM40, ShaderGpuProgramType.ConsoleFS];
             var firstVert = subPrograms.FirstOrDefault(x => vertTypes.Contains(x.GetProgramType(_engVer)));
             var firstFrag = subPrograms.FirstOrDefault(x => fragTypes.Contains(x.GetProgramType(_engVer)));
             
@@ -134,7 +132,7 @@ namespace USCSandbox.Processor
             var allKeywordsCombinations = subPrograms.Select(x => x.GlobalKeywords.Concat(x.LocalKeywords).Order()).ToList();
             HashSet<string> allUniqueKeywords = allKeywordsCombinations.SelectMany(x => x).ToHashSet();
             int leastKeywordsAmount = allKeywordsCombinations.Min(x => x.Count());
-            List<string> mandatoryKeywords = [];
+            List<string> mandatoryKeywords =[];
             
             List<string> optionalKeywords = new List<string>();
             foreach (string keyword in allUniqueKeywords)
@@ -204,7 +202,6 @@ namespace USCSandbox.Processor
                 var index = basket.index;
 
                 var subProg = blobManager.GetShaderSubProgram((int)subProgInfo.BlobIndex);
-                File.WriteAllBytes($"dbg_entry_data_{subProgInfo.BlobIndex}.bin", subProg.ProgramData);
 
                 ShaderParams param;
                 if (index != -1)
@@ -216,7 +213,10 @@ namespace USCSandbox.Processor
                     param = subProg.ShaderParams;
                 }
                 
-                param.CombineCommon(progInfo);
+                if (param != null)
+                {
+                    param.CombineCommon(progInfo);
+                }
 
                 var programType = subProg.GetProgramType(_engVer);
                 var graphicApi = _platformId;
@@ -259,18 +259,21 @@ namespace USCSandbox.Processor
                     structSb.Append($"#{preprocessorDirective} {string.Join(" && ", keywords)} // {passName}:{programType}");
                 }
                 
-                cbufferSb.Append(new string(' ', depth * 4));
-                cbufferSb.AppendLine($"// CBs for {programType}");
-                
-                foreach (ConstantBuffer cbuffer in param.ConstantBuffers)
+                if (param != null)
                 {
-                    cbufferSb.Append(WritePassCBuffer(param, declaredCBufs[string.Join("-", keywords)], cbuffer, depth));
+                    cbufferSb.Append(new string(' ', depth * 4));
+                    cbufferSb.AppendLine($"// CBs for {programType}");
+                    
+                    foreach (ConstantBuffer cbuffer in param.ConstantBuffers)
+                    {
+                        cbufferSb.Append(WritePassCBuffer(param, declaredCBufs[string.Join("-", keywords)], cbuffer, depth));
+                    }
+
+                    texSb.Append(new string(' ', depth * 4));
+                    texSb.AppendLine($"// Textures for {programType}");
+
+                    texSb.Append(WritePassTextures(param, declaredCBufs[string.Join("-", keywords)], depth));
                 }
-
-                texSb.Append(new string(' ', depth * 4));
-                texSb.AppendLine($"// Textures for {programType}");
-
-                texSb.Append(WritePassTextures(param, declaredCBufs[string.Join("-", keywords)], depth));
                 
                 switch (programType)
                 {
@@ -367,7 +370,7 @@ namespace USCSandbox.Processor
                     
                     if (!wroteCbufferHeaderYet && nonGlobalCbuffer)
                     {
-                        sb.Append(new string(' ', depth * 4)); // todo: new stringbuilder
+                        sb.Append(new string(' ', depth * 4));
                         sb.AppendLine($"// CBUFFER_START({cbuffer.Name}) // {cbufferIndex}");
                         depth++;
                     }
@@ -468,7 +471,6 @@ namespace USCSandbox.Processor
                     _sb.AppendNoIndent("[HDR] ");
                 if (flags.HasFlag(SerializedPropertyFlag.Gamma))
                     _sb.AppendNoIndent("[Gamma] ");
-                // more?
 
                 var name = prop["m_Name"].AsString;
                 var description = prop["m_Description"].AsString;
@@ -584,9 +586,7 @@ namespace USCSandbox.Processor
                     var vertProgInfos = vertInfo.GetForPlatform((int)GetVertexProgramForPlatform(_platformId));
                     var fragProgInfos = fragInfo.GetForPlatform((int)GetFragmentProgramForPlatform(_platformId));
                     
-                    // we should hopefully only have one of each type, but just in case...
-                    // todo: cleanup
-                    List<ShaderProgramBasket> baskets = [];
+                    List<ShaderProgramBasket> baskets =[];
                     for (var i = 0; i < vertProgInfos.Count; i++)
                     {
                         baskets.Add(new ShaderProgramBasket(vertInfo, vertProgInfos[i],
@@ -660,7 +660,6 @@ namespace USCSandbox.Processor
             var fogStart = state["fogStart.val"].AsFloat;
             var fogEnd = state["fogEnd.val"].AsFloat;
 
-            
             var lighting = state["lighting"].AsBool;
 
             if (alphaToMask > 0f)
@@ -868,7 +867,6 @@ namespace USCSandbox.Processor
             }
         }
 
-        // todo: move
         private ShaderGpuProgramType GetVertexProgramForPlatform(GPUPlatform gpuPlatform)
         {
             return gpuPlatform switch
