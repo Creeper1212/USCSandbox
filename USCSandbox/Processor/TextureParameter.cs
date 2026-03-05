@@ -1,5 +1,6 @@
-﻿using AssetRipper.Primitives;
+using AssetRipper.Primitives;
 using AssetsTools.NET;
+using System.Collections.Generic;
 
 namespace USCSandbox.Processor
 {
@@ -11,6 +12,7 @@ namespace USCSandbox.Processor
         public bool MultiSampled;
         public byte Dim;
 
+        // Constructor for reading from the Shader Blob (Compiled Data)
         public TextureParameter(AssetsFileReader r, UnityVersion engVer, string name)
         {
             var index = r.ReadInt32();
@@ -21,8 +23,12 @@ namespace USCSandbox.Processor
 
             var hasNewTextureParams = engVer.IsGreaterEqual(2018, 2);
             var hasMultiSampled = engVer.IsGreaterEqual(2017, 3);
+
             if (hasNewTextureParams)
             {
+                // In 2018.2+, metadata is packed into a uint:
+                // Bit 0: MultiSampled
+                // Bits 1+: Dimension
                 var textureExtraValue = r.ReadUInt32();
                 MultiSampled = (textureExtraValue & 1) == 1;
                 Dim = (byte)(textureExtraValue >> 1);
@@ -30,8 +36,10 @@ namespace USCSandbox.Processor
             }
             else if (hasMultiSampled)
             {
+                // In 2017.3+, MultiSampled is a separate boolean read as uint
                 var textureExtraValue = r.ReadUInt32();
                 MultiSampled = textureExtraValue == 1;
+                
                 Dim = unchecked((byte)extraValue);
                 SamplerIndex = extraValue >> 8;
                 if (SamplerIndex == 0xFFFFFF)
@@ -41,6 +49,7 @@ namespace USCSandbox.Processor
             }
             else
             {
+                // Older versions
                 MultiSampled = false;
                 Dim = unchecked((byte)extraValue);
                 SamplerIndex = extraValue >> 8;
@@ -51,6 +60,7 @@ namespace USCSandbox.Processor
             }
         }
 
+        // Constructor for reading from Asset Metadata (Serialized Common Parameters)
         public TextureParameter(AssetTypeValueField field, Dictionary<int, string> nameTable)
         {
             Name = nameTable[field["m_NameIndex"].AsInt];
