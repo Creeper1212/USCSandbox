@@ -35,19 +35,42 @@ Newest verification cycle (2026-03-05, after structured-load emission cleanup)
   - undeclared `rscN` references: 0
   - undeclared `smpN` references: 0
 
+Newest support update (2026-03-05, sample bias support + fallback typing pass)
+- Build command:
+  - `dotnet build USCSandbox/USCSandbox.csproj -c Release`
+- Decompile command:
+  - `USCSandbox.exe null "D:\Steam\steamapps\content\app_1533390\depot_1533391\Gorilla Tag_Data\sharedassets0.assets" 0 --all --version 2022.3.2f1`
+- Session log:
+  - `USCSandbox/USCSandbox/bin/Release/net8.0/logs/session-20260305-165820.log`
+- Measured results:
+  - shader files generated: 28
+  - session errors/warnings: 0 / 0
+  - started shaders vs completed shaders: 28 / 28
+  - unsupported instruction comments: 0
+  - unresolved `texND*` calls: 0
+  - unresolved fallback declarations: 528 total
+  - fallback type split: texture 244, structured 8, raw 4
+  - `tex*bias` emissions present (sample LOD bias now emitted): 8500
+  - undeclared `rscN` references: 0
+  - undeclared `smpN` references: 0
+
 Progress update (2026-03-05, post-baseline patch set)
 - Added opcode-based unresolved fallback declaration inference in shader emission.
 - Added unresolved sampler fallback declarations (`sampler2D smpN`) to prevent missing-symbol output.
 - Added keyword-set merged fallback typing so shared keyword variants use a consistent fallback type per register.
 - Replaced unresolved `texND*` fallback calls with compile-safe `tex2D*` fallback calls.
 - Removed non-compilable structured load emission pattern by emitting direct `.Load(...)` plus swizzle extraction.
+- Added explicit HLSL emission for `SampleLODBias` (`sample_b`) instead of silently dropping the instruction.
+- Added unknown-USIL fallback comment emission so unsupported instructions are no longer silently omitted from output.
+- Expanded fallback kind inference for sample/load instructions to classify them as texture resources instead of defaulting to raw.
 - Spot-validated on Gorilla Tag shaders:
   - `Unlit/Texture` (path id `2104`)
   - `GorillaTag/SnapPieceIndirect` (path id `2123`)
 
 Validation status
 - Full `--all` corpus re-run completed on 2026-03-05 after structured-load emitter changes.
-- Current active gap is fallback declaration volume/quality reduction (count is still 528), not missing declarations or unsupported opcodes.
+- Full `--all` corpus re-run completed again on 2026-03-05 after sample-bias/fallback-typing updates.
+- Current active gap is fallback declaration volume/quality reduction (count is still 528), but unresolved raw fallbacks are now low (4).
 
 Phase 1 - Measurement and Regression Harness (In Progress)
 1) Keep Gorilla Tag corpus as baseline.

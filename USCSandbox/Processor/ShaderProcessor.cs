@@ -594,6 +594,14 @@ namespace USCSandbox.Processor
         {
             return instructionType switch
             {
+                USILInstructionType.Sample or
+                USILInstructionType.SampleComparison or
+                USILInstructionType.SampleComparisonLODZero or
+                USILInstructionType.SampleLOD or
+                USILInstructionType.SampleLODBias or
+                USILInstructionType.SampleDerivative or
+                USILInstructionType.LoadResource or
+                USILInstructionType.LoadResourceMultisampled or
                 USILInstructionType.ResourceDimensionInfo or
                 USILInstructionType.GetDimensions => FallbackResourceKind.Texture,
                 USILInstructionType.LoadResourceStructured => FallbackResourceKind.Structured,

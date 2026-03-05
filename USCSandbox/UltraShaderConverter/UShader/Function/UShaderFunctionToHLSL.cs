@@ -74,6 +74,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.SampleComparison, HandleSample },
                 { USILInstructionType.SampleComparisonLODZero, HandleSample },
                 { USILInstructionType.SampleLOD, HandleSampleLOD },
+                { USILInstructionType.SampleLODBias, HandleSampleLODBias },
                 { USILInstructionType.SampleDerivative, HandleSampleDerivative },
                 { USILInstructionType.LoadResource, HandleLoadResource },
                 { USILInstructionType.LoadResourceMultisampled, HandleLoadResource },
@@ -170,9 +171,14 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 WriteLocals();
                 foreach (USILInstruction inst in _shader.instructions)
                 {
-                    if (_instructionHandlers.ContainsKey(inst.instructionType))
+                    if (_instructionHandlers.TryGetValue(inst.instructionType, out InstHandler? handler))
                     {
-                        _instructionHandlers[inst.instructionType](inst);
+                        handler(inst);
+                    }
+                    else
+                    {
+                        string comment = CommentString(inst);
+                        AppendLine($"{comment}// Unsupported USIL instruction: {inst.instructionType}");
                     }
                 }
             }
@@ -699,6 +705,33 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 USILOperandType.Sampler3D => $"tex3Dgrad({args})",
                 USILOperandType.SamplerCube => $"texCUBEgrad({args})",
                 _ => $"tex2Dgrad({args})"
+            };
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleSampleLODBias(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            USILOperand textureOperand = srcOps[2];
+            string bias = srcOps.Count > 3 ? srcOps[3].ToString() : "0";
+
+            string args;
+            if (srcOps[0].mask.Length == 2)
+            {
+                args = $"{srcOps[2]}, float4({srcOps[0]}, 0, {bias})";
+            }
+            else
+            {
+                args = $"{srcOps[2]}, float4({srcOps[0]}, {bias})";
+            }
+
+            string value = textureOperand.operandType switch
+            {
+                USILOperandType.Sampler2D => $"tex2Dbias({args})",
+                USILOperandType.Sampler3D => $"tex3Dbias({args})",
+                USILOperandType.SamplerCube => $"texCUBEbias({args})",
+                _ => $"tex2Dbias({args})"
             };
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");

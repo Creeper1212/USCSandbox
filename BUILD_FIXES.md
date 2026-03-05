@@ -260,3 +260,55 @@
   - no undeclared resource/sampler symbols
   - no invalid structured-load cast emission pattern
 - Remaining quality gap is fallback declaration volume/typing refinement (count remains 528), not hard compile blockers from missing symbols/patterns.
+
+## Latest Iteration (2026-03-05, sample-bias support + fallback typing refinement)
+
+### Build/decompile commands
+- `dotnet build USCSandbox/USCSandbox/USCSandbox.csproj -c Release`
+- `USCSandbox.exe null "D:\Steam\steamapps\content\app_1533390\depot_1533391\Gorilla Tag_Data\sharedassets0.assets" 0 --all --version 2022.3.2f1`
+- Session log: `USCSandbox/USCSandbox/bin/Release/net8.0/logs/session-20260305-165820.log`
+
+### Files edited in this iteration
+
+#### 22) `USCSandbox/USCSandbox/UltraShaderConverter/UShader/Function/UShaderFunctionToHLSL.cs`
+- Added instruction handler registration for `USILInstructionType.SampleLODBias`.
+- Added `HandleSampleLODBias` emitter using `tex2Dbias`/`tex3Dbias`/`texCUBEbias`.
+- Changed instruction dispatch to `TryGetValue` and added explicit fallback output line:
+  - `// Unsupported USIL instruction: <Type>`
+- Why:
+  - `sample_b` instructions were previously created by DX->USIL translation but dropped during HLSL emission.
+  - unhandled instructions are now surfaced instead of silently disappearing.
+
+#### 23) `USCSandbox/USCSandbox/Processor/ShaderProcessor.cs`
+- Expanded fallback resource kind inference so these instructions classify unresolved resources as texture-like:
+  - `Sample`
+  - `SampleComparison`
+  - `SampleComparisonLODZero`
+  - `SampleLOD`
+  - `SampleLODBias`
+  - `SampleDerivative`
+  - `LoadResource`
+  - `LoadResourceMultisampled`
+- Why:
+  - previously they defaulted to `Raw`, over-emitting `ByteAddressBuffer` fallback declarations.
+
+### Full-run metrics (newest output)
+- shader files generated: 28
+- session errors/warnings: 0 / 0
+- shader start count / process-complete count: 28 / 28
+- unsupported instruction comments in generated shaders: 0
+- unresolved `texND*` calls: 0
+- unresolved fallback declarations (total): 528
+- fallback split:
+  - texture: 244
+  - structured: 8
+  - raw: 4
+- `tex*bias` emissions (sample-b support evidence): 8500
+- undeclared `rscN` references: 0
+- undeclared `smpN` references: 0
+
+### Result
+- Export support is better for shader sampling paths:
+  - `sample_b` now emits HLSL instead of being omitted.
+  - instruction-handler misses now leave an explicit output comment instead of silent loss.
+  - fallback resource typing is now mostly texture/structured, with raw fallback usage reduced.
