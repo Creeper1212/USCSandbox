@@ -1,10 +1,12 @@
-﻿using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL;
-using Ryujinx.Graphics.Shader;
 using Ryujinx.Graphics.Shader.Decoders;
 using Ryujinx.Graphics.Shader.IntermediateRepresentation;
 using Ryujinx.Graphics.Shader.Translation;
-using System.Runtime.InteropServices;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using RyuOperandType = Ryujinx.Graphics.Shader.IntermediateRepresentation.OperandType;
 
 namespace USCSandbox.UltraShaderConverter.UShader.NVN
 {
@@ -12,7 +14,7 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
     {
         private TranslatorContext _nvnShader;
         private DecodedProgram _prog;
-        private Translator.FunctionCode[] _ryuIl;
+        private INode[] _ryuIl;
 
         public UShaderProgram shader;
 
@@ -23,9 +25,9 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
 
         private delegate void InstHandler(Operation inst);
         private Dictionary<Instruction, InstHandler> _instructionHandlers;
+        private Dictionary<Operand, int> _ryuLabels;
         private Dictionary<Operand, int> _ryuLocals;
-
-        private Dictionary<int, int> _resourceToDimension;
+        private Dictionary<BasicBlock, int> _blockIdxMap;
 
         public NvnProgramToUSIL(TranslatorContext nvnShader)
         {
@@ -33,72 +35,204 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
             _prog = nvnShader.Program;
 
             shader = new UShaderProgram();
-            _instructionHandlers = new()
+            _instructionHandlers = new Dictionary<Instruction, InstHandler>()
             {
-                { Instruction.Copy, new InstHandler(HandleCopy) },
-                { Instruction.Add, new InstHandler(HandleAdd) },
-                { Instruction.Multiply | Instruction.FP32, new InstHandler(HandleMul) },
-                { Instruction.Multiply | Instruction.FP64, new InstHandler(HandleMul) },
-                { Instruction.FusedMultiplyAdd | Instruction.FP32, new InstHandler(HandleMad) },
-                { Instruction.FusedMultiplyAdd | Instruction.FP64, new InstHandler(HandleMad) },
-                { Instruction.Load, new InstHandler(HandleLoad) },
+                { Instruction.Add, HandleAdd },
+                { Instruction.Clamp, HandleClamp },
+                { Instruction.ClampU32, HandleClamp },
+                { Instruction.Comment, HandleComment },
+                { Instruction.Copy, HandleCopy },
+                { Instruction.Divide, HandleDivide },
+                { Instruction.FusedMultiplyAdd, HandleMad },
+                { Instruction.Load, HandleLoadStore },
+                { Instruction.Maximum, HandleMaximum },
+                { Instruction.MaximumU32, HandleMaximum },
+                { Instruction.Minimum, HandleMinimum },
+                { Instruction.MinimumU32, HandleMinimum },
+                { Instruction.Multiply, HandleMul },
+                { Instruction.Negate, HandleNegate },
+                { Instruction.SquareRoot, HandleSquareRoot },
+                { Instruction.Store, HandleLoadStore },
+                { Instruction.Subtract, HandleAdd },
+                { Instruction.ReciprocalSquareRoot, HandleRSquareRoot },
+                { Instruction.Return, HandleReturn }
             };
 
-            // locals are not ID'd but pointers to specific operands
-            // instead. we create a dictionary so we have actual IDs.
             _ryuLocals = new Dictionary<Operand, int>();
-            _resourceToDimension = new Dictionary<int, int>();
+            _ryuLabels = new Dictionary<Operand, int>();
+            _blockIdxMap = new Dictionary<BasicBlock, int>();
         }
 
         public void Convert()
         {
             GenerateRyujinxIl();
             ConvertInstructions();
-            var a = 2;
         }
 
         private void GenerateRyujinxIl()
         {
-            _ryuIl = Translator.EmitShader(_prog, _nvnShader.Config, true, out _);
+            var funcs = _nvnShader.TranslateToFunctions();
+            var func = funcs[0];
+            var insts = new List<INode>();
+
+            var blockIdx = 0;
+            foreach (var block in func.Blocks)
+            {
+                _blockIdxMap[block] = blockIdx++;
+            }
+
+            foreach (var block in func.Blocks)
+            {
+                insts.Add(new CommentNode($"Block {_blockIdxMap[block]}"));
+                insts.AddRange(block.Operations);
+                
+                if (block.HasBranch)
+                {
+                    if (block.Branch != null)
+                        insts.Add(new CommentNode($"  Block {_blockIdxMap[block]} BT -> Block {_blockIdxMap[block.Branch]}"));
+                    if (block.Next != null)
+                        insts.Add(new CommentNode($"  Block {_blockIdxMap[block]} BF -> Block {_blockIdxMap[block.Next]}"));
+                }
+                else
+                {
+                    if (block.Next != null)
+                        insts.Add(new CommentNode($"  Block {_blockIdxMap[block]} BU -> Block {_blockIdxMap[block.Next]}"));
+                }
+            }
+            _ryuIl = insts.ToArray();
         }
 
         private void ConvertInstructions()
         {
-            Operation[] mainFuncCode = _ryuIl[0].Code;
-            for (int i = 0; i < mainFuncCode.Length; i++)
+            foreach (INode node in _ryuIl)
             {
-                Operation inst = mainFuncCode[i];
-                if (_instructionHandlers.ContainsKey(inst.Inst))
+                string disasm = "???";
+                if (node is Operation inst)
                 {
-                    _instructionHandlers[inst.Inst](inst);
-                }
-                else
-                {
-                    string disasm = inst.Inst.ToString();
-                    Instructions.Add(new USILInstruction
+                    disasm = RyuOperationToString(inst);
+                    Instruction maskedInst = inst.Inst & Instruction.Mask;
+                    if (_instructionHandlers.ContainsKey(maskedInst))
                     {
-                        instructionType = USILInstructionType.Comment,
-                        destOperand = new USILOperand
-                        {
-                            comment = $"{disasm} // Unsupported",
-                            operandType = USILOperandType.Comment
-                        },
-                        srcOperands = new List<USILOperand>()
-                    });
+                        _instructionHandlers[maskedInst](inst);
+                        continue;
+                    }
                 }
+                else if (node is PhiNode phiNode)
+                {
+                    disasm = RyuPhiNodeToString(phiNode);
+                }
+                else if (node is CommentNode commentNode)
+                {
+                    disasm = commentNode.Comment;
+                }
+
+                Instructions.Add(new USILInstruction
+                {
+                    instructionType = USILInstructionType.Comment,
+                    destOperand = new USILOperand
+                    {
+                        comment = $"{disasm}",
+                        operandType = USILOperandType.Comment
+                    },
+                    srcOperands = new List<USILOperand>()
+                });
             }
+        }
+
+        private string RyuOperationToString(Operation operation)
+        {
+            string maskedInst = (operation.Inst & Instruction.Mask).ToString();
+            if ((operation.Inst & Instruction.FP32) != 0) maskedInst += ".FP32";
+            if ((operation.Inst & Instruction.FP64) != 0) maskedInst += ".FP64";
+
+            string storeKind = operation.StorageKind.ToString();
+
+            List<string> destStrs = Enumerable.Range(0, operation.DestsCount)
+                .Select(i => RyuOperandToString(operation.GetDest(i)))
+                .ToList();
+
+            List<string> srcStrs = Enumerable.Range(0, operation.SourcesCount)
+                .Select(i => RyuOperandToString(operation.GetSource(i)))
+                .ToList();
+
+            return $"{maskedInst}({storeKind}) {string.Join(",", destStrs)} <= {string.Join(",", srcStrs)}";
+        }
+
+        private string RyuPhiNodeToString(PhiNode operation)
+        {
+            List<string> destStrs = Enumerable.Range(0, operation.DestsCount)
+                .Select(i => RyuOperandToString(operation.GetDest(i)))
+                .ToList();
+
+            List<string> srcStrs = Enumerable.Range(0, operation.SourcesCount)
+                .Select(i => $"{RyuOperandToString(operation.GetSource(i))}:Block{_blockIdxMap[operation.GetBlock(i)]}")
+                .ToList();
+
+            return $"$phi {string.Join(",", destStrs)} <= {string.Join(",", srcStrs)}";
+        }
+
+        private string RyuOperandToString(Operand operand)
+        {
+            if (operand == null) return "[null]";
+            
+            switch (operand.Type)
+            {
+                case RyuOperandType.Argument:
+                    return $"[arg:{operand.Value}]";
+                case RyuOperandType.Constant:
+                    return $"[con:{operand.Value}]";
+                case RyuOperandType.ConstantBuffer:
+                    return $"[cbf:{operand.GetCbufSlot()}:{operand.GetCbufOffset()}]";
+                case RyuOperandType.Label:
+                    if (!_ryuLabels.ContainsKey(operand))
+                    {
+                        _ryuLabels.Add(operand, _ryuLabels.Count);
+                    }
+                    return $"[lbl:{_ryuLabels[operand]}]";
+                case RyuOperandType.LocalVariable:
+                    if (!_ryuLocals.ContainsKey(operand))
+                    {
+                        _ryuLocals.Add(operand, _ryuLocals.Count);
+                    }
+                    return $"[var:L{_ryuLocals[operand]}]";
+                case RyuOperandType.Register:
+                    return $"[reg:{RyuRegisterToString(operand.GetRegister())}]";
+                case RyuOperandType.Undefined:
+                    return "[undef]";
+                default:
+                    return "[unk]";
+            }
+        }
+
+        private string RyuRegisterToString(Register register)
+        {
+            string typePrefix = register.Type switch
+            {
+                RegisterType.Flag => "F",
+                RegisterType.Gpr => "R",
+                RegisterType.Predicate => "P",
+                _ => "?"
+            };
+
+            return $"{typePrefix}{register.Index}{(register.IsPT ? "P" : "")}{(register.IsRZ ? "R" : "")}";
         }
 
         private void FillUSILOperand(Operand mxOperand, USILOperand usilOperand, bool immIsInt)
         {
+            if (mxOperand == null)
+            {
+                usilOperand.operandType = USILOperandType.Null;
+                return;
+            }
+
             switch (mxOperand.Type)
             {
-                case OperandType.Constant:
+                case RyuOperandType.Constant:
                 {
                     SetUsilOperandImmediate(usilOperand, mxOperand.Value, mxOperand.AsFloat(), immIsInt);
                     break;
                 }
-                case OperandType.ConstantBuffer:
+                case RyuOperandType.ConstantBuffer:
                 {
                     int cbufSlot = mxOperand.GetCbufSlot();
                     int cbufOffset = mxOperand.GetCbufOffset();
@@ -106,13 +240,13 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
                     int elemIndex = cbufOffset & 3;
 
                     usilOperand.operandType = USILOperandType.ConstantBuffer;
-                    usilOperand.registerIndex = 3 - cbufSlot; // idk
+                    usilOperand.registerIndex = 3 - cbufSlot; // Slot remap logic
                     usilOperand.arrayIndex = vecIndex;
-                    usilOperand.mask = new int[] { new int[] { 0, 1, 2, 3 }[elemIndex] };
+                    usilOperand.mask = new int[] { elemIndex };
                     break;
                 }
-                case OperandType.Register:
-                case OperandType.LocalVariable:
+                case RyuOperandType.Register:
+                case RyuOperandType.LocalVariable:
                 {
                     Register reg = mxOperand.GetRegister();
 
@@ -123,13 +257,13 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
                     else if (reg.Type == RegisterType.Gpr || reg.Type == RegisterType.Flag)
                     {
                         usilOperand.operandType = USILOperandType.TempRegister;
-                        if (mxOperand.Type == OperandType.LocalVariable)
+                        if (mxOperand.Type == RyuOperandType.LocalVariable)
                         {
                             if (!_ryuLocals.ContainsKey(mxOperand))
                             {
                                 _ryuLocals.Add(mxOperand, _ryuLocals.Count);
                             }
-                            usilOperand.registerIndex = _ryuLocals[mxOperand] + 1000;
+                            usilOperand.registerIndex = _ryuLocals[mxOperand] + 1000; // +1000 to differentiate from normal registers
                         }
                         else
                         {
@@ -162,53 +296,7 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
                 usilOperand.immValueFloat = new float[] { floatValue };
         }
 
-        private void HandleCopy(Operation inst)
-        {
-            Operand dest = inst.GetDest(0);
-            Operand src0 = inst.GetSource(0);
-
-            USILInstruction usilInst = new USILInstruction();
-            USILOperand usilDest = new USILOperand();
-            USILOperand usilSrc0 = new USILOperand();
-
-            FillUSILOperand(dest, usilDest, false);
-            FillUSILOperand(src0, usilSrc0, false);
-
-            usilInst.instructionType = USILInstructionType.Move;
-            usilInst.destOperand = usilDest;
-            usilInst.srcOperands = new List<USILOperand>
-            {
-                usilSrc0
-            };
-            usilInst.saturate = false;
-
-            Instructions.Add(usilInst);
-        }
-
         private void HandleAdd(Operation inst)
-        {
-            Operand dest = inst.GetDest(0);
-            Operand src0 = inst.GetSource(0);
-
-            USILInstruction usilInst = new USILInstruction();
-            USILOperand usilDest = new USILOperand();
-            USILOperand usilSrc0 = new USILOperand();
-
-            FillUSILOperand(dest, usilDest, false);
-            FillUSILOperand(src0, usilSrc0, false);
-
-            usilInst.instructionType = USILInstructionType.Add;
-            usilInst.destOperand = usilDest;
-            usilInst.srcOperands = new List<USILOperand>
-            {
-                usilSrc0
-            };
-            usilInst.saturate = false;
-
-            Instructions.Add(usilInst);
-        }
-
-        private void HandleMul(Operation inst)
         {
             Operand dest = inst.GetDest(0);
             Operand src0 = inst.GetSource(0);
@@ -223,15 +311,188 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
             FillUSILOperand(src0, usilSrc0, false);
             FillUSILOperand(src1, usilSrc1, false);
 
-            usilInst.instructionType = USILInstructionType.Multiply;
-            usilInst.destOperand = usilDest;
-            usilInst.srcOperands = new List<USILOperand>
+            if ((inst.Inst & Instruction.Mask) == Instruction.Add)
             {
-                usilSrc0, usilSrc1
-            };
+                usilInst.instructionType = USILInstructionType.Add;
+            }
+            else
+            {
+                usilInst.instructionType = USILInstructionType.Subtract;
+            }
+
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1 };
             usilInst.saturate = false;
 
             Instructions.Add(usilInst);
+        }
+
+        private void HandleClamp(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+            Operand src1 = inst.GetSource(1);
+            Operand src2 = inst.GetSource(2);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+            USILOperand usilSrc1 = new USILOperand();
+            USILOperand usilSrc2 = new USILOperand();
+
+            bool isInt = (inst.Inst & Instruction.Mask) == Instruction.ClampU32;
+
+            FillUSILOperand(dest, usilDest, isInt);
+            FillUSILOperand(src0, usilSrc0, isInt);
+            FillUSILOperand(src1, usilSrc1, isInt);
+            FillUSILOperand(src2, usilSrc2, isInt);
+
+            if (isInt)
+            {
+                usilInst.instructionType = USILInstructionType.ClampUInt;
+            }
+            else
+            {
+                usilInst.instructionType = USILInstructionType.Clamp;
+            }
+
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1, usilSrc2 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleComment(Operation inst)
+        {
+            var commentInst = (CommentNode)inst;
+            Instructions.Add(new USILInstruction
+            {
+                instructionType = USILInstructionType.Comment,
+                destOperand = new USILOperand
+                {
+                    comment = commentInst.Comment,
+                    operandType = USILOperandType.Comment
+                },
+                srcOperands = new List<USILOperand>()
+            });
+        }
+
+        private void HandleCopy(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, false);
+            FillUSILOperand(src0, usilSrc0, false);
+
+            usilInst.instructionType = USILInstructionType.Move;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleDivide(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+            Operand src1 = inst.GetSource(1);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+            USILOperand usilSrc1 = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, false);
+            FillUSILOperand(src0, usilSrc0, false);
+            FillUSILOperand(src1, usilSrc1, false);
+
+            usilInst.instructionType = USILInstructionType.Divide;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleLoadStore(Operation inst)
+        {
+            bool isStore = (inst.Inst & Instruction.Mask) == Instruction.Store;
+            int srcIdx = 0;
+            StorageKind storKind = inst.StorageKind;
+
+            if (storKind.IsInputOrOutput())
+            {
+                Operand dest = !isStore ? inst.GetDest(0) : null;
+
+                Operand srcVarId = inst.GetSource(srcIdx++);
+                IoVariable io = (IoVariable)srcVarId.Value;
+
+                USILInstruction usilInst = new USILInstruction();
+                USILOperand usilDest = new USILOperand();
+                USILOperand usilSrc0 = new USILOperand();
+
+                USILOperand specialOp = !isStore ? usilSrc0 : usilDest;
+                switch (io)
+                {
+                    case IoVariable.UserDefined:
+                    case IoVariable.FragmentOutputColor:
+                    {
+                        Operand srcRegIndex = inst.GetSource(srcIdx++);
+                        Operand srcMaskIndex = inst.GetSource(srcIdx++);
+
+                        specialOp.operandType = storKind switch
+                        {
+                            StorageKind.Input or StorageKind.InputPerPatch => USILOperandType.InputRegister,
+                            StorageKind.Output or StorageKind.OutputPerPatch => USILOperandType.OutputRegister,
+                            _ => throw new Exception("invalid storage kind")
+                        };
+                        specialOp.registerIndex = srcRegIndex.Value;
+                        specialOp.mask = new int break;
+                    }
+                    default:
+                    {
+                        goto unsupported;
+                    }
+                }
+
+                if (!isStore && dest != null)
+                {
+                    FillUSILOperand(dest, usilDest, false);
+                }
+                else
+                {
+                    Operand storeVal = inst.GetSource(srcIdx++);
+                    FillUSILOperand(storeVal, usilSrc0, false);
+                }
+
+                usilInst.instructionType = USILInstructionType.Move;
+                usilInst.destOperand = usilDest;
+                usilInst.srcOperands = new List<USILOperand> { usilSrc0 };
+                usilInst.saturate = false;
+
+                Instructions.Add(usilInst);
+                return;
+            }
+
+        unsupported:
+            string disasm = inst.Inst.ToString();
+            Instructions.Add(new USILInstruction
+            {
+                instructionType = USILInstructionType.Comment,
+                destOperand = new USILOperand
+                {
+                    comment = $"{disasm} // Unsupported",
+                    operandType = USILOperandType.Comment
+                },
+                srcOperands = new List<USILOperand>()
+            });
         }
 
         private void HandleMad(Operation inst)
@@ -254,60 +515,63 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
 
             usilInst.instructionType = USILInstructionType.MultiplyAdd;
             usilInst.destOperand = usilDest;
-            usilInst.srcOperands = new List<USILOperand>
-            {
-                usilSrc0, usilSrc1, usilSrc2
-            };
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1, usilSrc2 };
             usilInst.saturate = false;
 
             Instructions.Add(usilInst);
         }
 
-        private void HandleLoad(Operation inst)
+        private void HandleMaximum(Operation inst)
         {
             Operand dest = inst.GetDest(0);
             Operand src0 = inst.GetSource(0);
             Operand src1 = inst.GetSource(1);
 
-            if (inst.StorageKind == StorageKind.Input)
-            {
-                IoVariable io = (IoVariable)src0.Value;
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+            USILOperand usilSrc1 = new USILOperand();
 
-                USILInstruction usilInst = new USILInstruction();
-                USILOperand usilDest = new USILOperand();
-                USILOperand usilSrc0 = new USILOperand();
+            bool isInt = (inst.Inst & Instruction.Mask) == Instruction.MaximumU32;
 
-                FillUSILOperand(dest, usilDest, false);
-                usilSrc0.operandType = USILOperandType.Comment;
-                usilSrc0.comment = $"/*{io}, {src1.Value}*/";
+            FillUSILOperand(dest, usilDest, isInt);
+            FillUSILOperand(src0, usilSrc0, isInt);
+            FillUSILOperand(src1, usilSrc1, isInt);
 
-                usilInst.instructionType = USILInstructionType.Move;
-                usilInst.destOperand = usilDest;
-                usilInst.srcOperands = new List<USILOperand>
-                {
-                    usilSrc0
-                };
-                usilInst.saturate = false;
+            usilInst.instructionType = USILInstructionType.Maximum;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1 };
+            usilInst.saturate = false;
 
-                Instructions.Add(usilInst);
-            }
-            else
-            {
-                string disasm = inst.Inst.ToString();
-                Instructions.Add(new USILInstruction
-                {
-                    instructionType = USILInstructionType.Comment,
-                    destOperand = new USILOperand
-                    {
-                        comment = $"{disasm} // Unsupported",
-                        operandType = USILOperandType.Comment
-                    },
-                    srcOperands = new List<USILOperand>()
-                });
-            }
+            Instructions.Add(usilInst);
         }
 
-        private void HandleStore(Operation inst)
+        private void HandleMinimum(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+            Operand src1 = inst.GetSource(1);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+            USILOperand usilSrc1 = new USILOperand();
+
+            bool isInt = (inst.Inst & Instruction.Mask) == Instruction.MinimumU32;
+
+            FillUSILOperand(dest, usilDest, isInt);
+            FillUSILOperand(src0, usilSrc0, isInt);
+            FillUSILOperand(src1, usilSrc1, isInt);
+
+            usilInst.instructionType = USILInstructionType.Minimum;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleMul(Operation inst)
         {
             Operand dest = inst.GetDest(0);
             Operand src0 = inst.GetSource(0);
@@ -324,28 +588,78 @@ namespace USCSandbox.UltraShaderConverter.UShader.NVN
 
             usilInst.instructionType = USILInstructionType.Multiply;
             usilInst.destOperand = usilDest;
-            usilInst.srcOperands = new List<USILOperand>
-            {
-                usilSrc0, usilSrc1
-            };
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0, usilSrc1 };
             usilInst.saturate = false;
 
             Instructions.Add(usilInst);
         }
 
-        private class GpuAccessor : IGpuAccessor
+        private void HandleNegate(Operation inst)
         {
-            private readonly byte[] _data;
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
 
-            public GpuAccessor(byte[] data)
-            {
-                _data = data;
-            }
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
 
-            public ReadOnlySpan<ulong> GetCode(ulong address, int minimumSize)
-            {
-                return MemoryMarshal.Cast<byte, ulong>(new ReadOnlySpan<byte>(_data).Slice((int)address));
-            }
+            FillUSILOperand(dest, usilDest, false);
+            FillUSILOperand(src0, usilSrc0, false);
+
+            usilInst.instructionType = USILInstructionType.Negate;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleSquareRoot(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, false);
+            FillUSILOperand(src0, usilSrc0, false);
+
+            usilInst.instructionType = USILInstructionType.SquareRoot;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleRSquareRoot(Operation inst)
+        {
+            Operand dest = inst.GetDest(0);
+            Operand src0 = inst.GetSource(0);
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, false);
+            FillUSILOperand(src0, usilSrc0, false);
+
+            usilInst.instructionType = USILInstructionType.SquareRootReciprocal;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand> { usilSrc0 };
+            usilInst.saturate = false;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleReturn(Operation inst)
+        {
+            USILInstruction usilInst = new USILInstruction();
+            usilInst.instructionType = USILInstructionType.Return;
+            usilInst.srcOperands = new List<USILOperand>();
+            Instructions.Add(usilInst);
         }
     }
 }
