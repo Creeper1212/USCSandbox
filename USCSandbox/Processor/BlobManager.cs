@@ -1,32 +1,50 @@
-﻿using AssetRipper.Primitives;
+using AssetRipper.Primitives;
 using AssetsTools.NET;
+using System.Collections.Generic;
+using System.IO;
 
 namespace USCSandbox.Processor
 {
     public class BlobManager
     {
-        private AssetsFileReader _reader;
+        private AssetsFileReader[] _readers;
         private UnityVersion _engVer;
 
         public List<BlobEntry> Entries;
 
-        public BlobManager(byte[] blob, UnityVersion engVer)
+        public BlobManager(byte[][] blobs, UnityVersion engVer)
         {
-            _reader = new AssetsFileReader(new MemoryStream(blob));
+            // Initialize a reader for each decompressed segment
+            _readers = new AssetsFileReader[blobs.Length];
+            for (var i = 0; i < blobs.Length; i++)
+            {
+                _readers[i] = new AssetsFileReader(new MemoryStream(blobs[i]));
+            }
+
             _engVer = engVer;
 
-            var count = _reader.ReadInt32();
+            // The header and entry list are always in Segment 0
+            var tableReader = _readers[0];
+            var count = tableReader.ReadInt32();
             Entries = new List<BlobEntry>(count);
             for (var i = 0; i < count; i++)
             {
-                Entries.Add(new BlobEntry(_reader, engVer));
+                Entries.Add(new BlobEntry(tableReader, engVer));
             }
         }
 
         public byte[] GetRawEntry(int index)
         {
-            _reader.BaseStream.Position = Entries[index].Offset;
-            return _reader.ReadBytes(Entries[index].Length);
+            var entry = Entries[index];
+            
+            // Older versions don't have Segment set (defaults to 0). 
+            // Also adds a fallback safety check just in case.
+            AssetsFileReader reader = entry.Segment < 0 || entry.Segment >= _readers.Length
+                ? _readers[0]
+                : _readers[entry.Segment];
+
+            reader.BaseStream.Position = entry.Offset;
+            return reader.ReadBytes(entry.Length);
         }
 
         public ShaderParams GetShaderParams(int index)
