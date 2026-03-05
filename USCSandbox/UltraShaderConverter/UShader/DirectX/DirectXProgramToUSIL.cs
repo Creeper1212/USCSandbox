@@ -47,6 +47,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.or, HandleOr },
                 { Opcode.xor, HandleXor },
                 { Opcode.not, HandleNot },
+                { Opcode.bfi, HandleBfi },
+                { Opcode.ubfe, HandleBfe },
+                { Opcode.ibfe, HandleBfe },
                 { Opcode.ftoi, HandleFtoi },
                 { Opcode.ftou, HandleFtoi },
                 { Opcode.itof, HandleItof },
@@ -83,6 +86,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.sample_d, HandleSampleD },
                 { Opcode.ld, HandleLd },
                 { Opcode.ldms, HandleLd },
+                { Opcode.ld_raw, HandleLdRaw },
                 { Opcode.ld_structured, HandleLdStructured },
                 { Opcode.discard, HandleDiscard },
                 { Opcode.resinfo, HandleResInfo },
@@ -833,6 +837,74 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             usilInst.srcOperands = new List<USILOperand>
             {
                 usilSrc0
+            };
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleBfi(SHDRInstruction inst)
+        {
+            // bfi dest, width, offset, src, base
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcWidth = inst.operands[1];
+            SHDRInstructionOperand srcOffset = inst.operands[2];
+            SHDRInstructionOperand srcInsert = inst.operands[3];
+            SHDRInstructionOperand srcBase = inst.operands[4];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilWidth = new USILOperand();
+            USILOperand usilOffset = new USILOperand();
+            USILOperand usilInsert = new USILOperand();
+            USILOperand usilBase = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcWidth, usilWidth, MapMask(dest.swizzle, srcWidth.swizzle), true);
+            FillUSILOperand(srcOffset, usilOffset, MapMask(dest.swizzle, srcOffset.swizzle), true);
+            FillUSILOperand(srcInsert, usilInsert, MapMask(dest.swizzle, srcInsert.swizzle), true);
+            FillUSILOperand(srcBase, usilBase, MapMask(dest.swizzle, srcBase.swizzle), true);
+
+            usilInst.instructionType = USILInstructionType.BitFieldInsert;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilWidth,
+                usilOffset,
+                usilInsert,
+                usilBase
+            };
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleBfe(SHDRInstruction inst)
+        {
+            // ubfe/ibfe dest, width, offset, value
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcWidth = inst.operands[1];
+            SHDRInstructionOperand srcOffset = inst.operands[2];
+            SHDRInstructionOperand srcValue = inst.operands[3];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilWidth = new USILOperand();
+            USILOperand usilOffset = new USILOperand();
+            USILOperand usilValue = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcWidth, usilWidth, MapMask(dest.swizzle, srcWidth.swizzle), true);
+            FillUSILOperand(srcOffset, usilOffset, MapMask(dest.swizzle, srcOffset.swizzle), true);
+            FillUSILOperand(srcValue, usilValue, MapMask(dest.swizzle, srcValue.swizzle), true);
+
+            usilInst.instructionType = inst.opcode == Opcode.ibfe
+                ? USILInstructionType.BitFieldExtractSigned
+                : USILInstructionType.BitFieldExtractUnsigned;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilWidth,
+                usilOffset,
+                usilValue
             };
 
             Instructions.Add(usilInst);
@@ -1604,6 +1676,33 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             Instructions.Add(usilInst);
         }
 
+        private void HandleLdRaw(SHDRInstruction inst)
+        {
+            // ld_raw dest, byteAddress, resource
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcAddress = inst.operands[1];
+            SHDRInstructionOperand srcResource = inst.operands[2];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrcAddress = new USILOperand();
+            USILOperand usilSrcResource = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcAddress, usilSrcAddress, srcAddress.swizzle, true);
+            FillUSILOperand(srcResource, usilSrcResource, MapMask(dest.swizzle, srcResource.swizzle), false);
+
+            usilInst.instructionType = USILInstructionType.LoadResourceRaw;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilSrcAddress,
+                usilSrcResource
+            };
+
+            Instructions.Add(usilInst);
+        }
+
         private void HandleLdStructured(SHDRInstruction inst)
         {
             SHDRInstructionOperand dest = inst.operands[0]; // The address of the result of the operation.
@@ -2312,204 +2411,6 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
         private int ConvertFloatToInt(float f)
         {
             return BitConverter.SingleToInt32Bits(f);
-        }
-    }
-}
-```
-
-### Step 10: `USCSandbox\Program.cs`
-
-**The Fix:** Finally, we update the main entry point to correctly use our new `ShaderProcessor` instead of the placeholder/old logic. This enables file writing and platform selection.
-
-Replace the entire contents of `.\USCSandbox-main\USCSandbox\Program.cs` with this code:
-
-```csharp
-using AssetsTools.NET;
-using AssetsTools.NET.Extra;
-using USCSandbox.Processor;
-using UnityVersion = AssetRipper.Primitives.UnityVersion;
-using System;
-using System.Collections.Generic;
-using System.IO;
-
-namespace USCSandbox
-{
-    internal class Program
-    {
-        static void Main(string[] args)
-        {
-            if (args.Length < 1)
-            {
-                Console.WriteLine("USCS [bundle path] [assets path] [shader path id] <--platform> <--version> <--all>");
-                Console.WriteLine("  [bundle path (or \"null\" for no bundle)]");
-                Console.WriteLine("  [assets path (or file name in bundle)]");
-                Console.WriteLine("  [shader path id (or --all to load all shaders)]");
-                Console.WriteLine("  --platform <[d3d11, Switch] (or skip this arg for d3d11)>");
-                Console.WriteLine("  --version <unity version override>");
-                return;
-            }
-
-            var manager = new AssetsManager();
-            AssetsFileInstance afileInst;
-
-            GPUPlatform platform = GPUPlatform.d3d11;
-            UnityVersion? ver = null;
-            bool allSet = false;
-
-            List<string> argList = new List<string>();
-            for (var i = 0; i < args.Length; i++)
-            {
-                var arg = args[i];
-                if (arg.StartsWith("--"))
-                {
-                    switch (arg)
-                    {
-                        case "--platform":
-                            platform = Enum.Parse<GPUPlatform>(args[++i]);
-                            break;
-                        case "--version":
-                            ver = UnityVersion.Parse(args[++i]);
-                            break;
-                        case "--all":
-                            allSet = true;
-                            break;
-                        default:
-                            Console.WriteLine($"Optional argmuent {arg} is invalid.");
-                            return;
-                    }
-                }
-                else
-                {
-                    argList.Add(arg);
-                }
-            }
-
-            var bundlePath = argList[0];
-            if (argList.Count == 1)
-            {
-                var bundleFile = manager.LoadBundleFile(bundlePath, true);
-                var dirInfs = bundleFile.file.BlockAndDirInfo.DirectoryInfos;
-                Console.WriteLine("Available files in bundle:");
-                foreach (var dirInf in dirInfs)
-                {
-                    if ((dirInf.Flags & 4) == 0)
-                        continue;
-
-                    Console.WriteLine($"  {dirInf.Name}");
-                }
-                return;
-            }
-
-            var assetsFileName = argList[1];
-            if (argList.Count == 2 && !allSet)
-            {
-                if (bundlePath != "null")
-                {
-                    var bundleFile = manager.LoadBundleFile(bundlePath, true);
-                    afileInst = manager.LoadAssetsFileFromBundle(bundleFile, assetsFileName);
-
-                    manager.LoadClassPackage("classdata.tpk");
-                    manager.LoadClassDatabaseFromPackage(bundleFile.file.Header.EngineVersion);
-
-                    Console.WriteLine("Available shaders in bundle:");
-                }
-                else
-                {
-                    afileInst = manager.LoadAssetsFile(assetsFileName);
-
-                    manager.LoadClassPackage("classdata.tpk");
-                    manager.LoadClassDatabaseFromPackage(afileInst.file.Metadata.UnityVersion);
-
-                    Console.WriteLine("Available shaders in assets file:");
-                }
-
-                foreach (var shaderInf in afileInst.file.GetAssetsOfType(AssetClassID.Shader))
-                {
-                    var tmpShaderBf = manager.GetBaseField(afileInst, shaderInf);
-                    var tmpShaderName = tmpShaderBf["m_ParsedForm"]["m_Name"].AsString;
-                    Console.WriteLine($"  {tmpShaderName} (path id {shaderInf.PathId})");
-                }
-                return;
-            }
-
-            long shaderPathId = 0;
-            if (argList.Count > 2)
-                shaderPathId = long.Parse(argList[2]);
-
-            if (bundlePath != "null")
-            {
-                var bundleFile = manager.LoadBundleFile(bundlePath, true);
-                afileInst = manager.LoadAssetsFileFromBundle(bundleFile, assetsFileName);
-
-                if (ver is null)
-                {
-                    var verStr = bundleFile.file.Header.EngineVersion;
-                    if (verStr != "0.0.0")
-                    {
-                        var fixedVerStr = new AssetsTools.NET.Extra.UnityVersion(verStr).ToString();
-                        ver = UnityVersion.Parse(fixedVerStr);
-                    }
-                }
-            }
-            else
-            {
-                afileInst = manager.LoadAssetsFile(assetsFileName);
-
-                if (ver is null)
-                {
-                    var verStr = afileInst.file.Metadata.UnityVersion;
-                    if (verStr != "0.0.0")
-                    {
-                        var fixedVerStr = new AssetsTools.NET.Extra.UnityVersion(verStr).ToString();
-                        ver = UnityVersion.Parse(fixedVerStr);
-                    }
-                }
-            }
-
-            if (ver is null)
-            {
-                Console.WriteLine("File version was stripped. Please set --version flag.");
-                return;
-            }
-
-            manager.LoadClassPackage("classdata.tpk");
-            manager.LoadClassDatabaseFromPackage(ver.ToString());
-
-            var shadersToLoad = new List<AssetFileInfo>();
-            if (shaderPathId != 0)
-                shadersToLoad.Add(afileInst.file.GetAssetInfo(shaderPathId));
-            else
-                shadersToLoad.AddRange(afileInst.file.GetAssetsOfType(AssetClassID.Shader));
-
-            foreach (var shaderInf in shadersToLoad)
-            {
-                var shaderBf = manager.GetBaseField(afileInst, shaderInf);
-                if (shaderBf == null)
-                {
-                    Console.WriteLine("Shader asset not found or couldn't be read.");
-                    return;
-                }
-
-                var shaderName = shaderBf["m_ParsedForm"]["m_Name"].AsString;
-                
-                try
-                {
-                    var shaderProcessor = new ShaderProcessor(shaderBf, ver.Value, platform);
-                    string shaderText = shaderProcessor.Process();
-
-                    string outDir = Path.Combine(Environment.CurrentDirectory, "out", Path.GetDirectoryName(shaderName)!);
-                    Directory.CreateDirectory(outDir);
-                    
-                    string outName = Path.Combine(Environment.CurrentDirectory, "out", shaderName + ".shader");
-                    File.WriteAllText(outName, shaderText);
-                    Console.WriteLine($"[SUCCESS] {shaderName} -> {outName}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[ERROR] Failed to decompile {shaderName}: {ex.Message}");
-                    Console.WriteLine(ex.StackTrace);
-                }
-            }
         }
     }
 }

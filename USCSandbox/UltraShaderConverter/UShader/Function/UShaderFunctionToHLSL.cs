@@ -38,6 +38,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.Or, HandleOr },
                 { USILInstructionType.Xor, HandleXor },
                 { USILInstructionType.Not, HandleNot },
+                { USILInstructionType.BitFieldInsert, HandleBitFieldInsert },
+                { USILInstructionType.BitFieldExtractUnsigned, HandleBitFieldExtractUnsigned },
+                { USILInstructionType.BitFieldExtractSigned, HandleBitFieldExtractSigned },
                 { USILInstructionType.Minimum, HandleMinimum },
                 { USILInstructionType.Maximum, HandleMaximum },
                 { USILInstructionType.SquareRoot, HandleSquareRoot },
@@ -51,7 +54,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.Round, HandleRound },
                 { USILInstructionType.Truncate, HandleTruncate },
                 { USILInstructionType.IntToFloat, HandleIntToFloat },
+                { USILInstructionType.UIntToFloat, HandleUIntToFloat },
                 { USILInstructionType.FloatToInt, HandleFloatToInt },
+                { USILInstructionType.FloatToUInt, HandleFloatToUInt },
                 { USILInstructionType.Negate, HandleNegate },
                 { USILInstructionType.Clamp, HandleClamp },
                 { USILInstructionType.ClampUInt, HandleClamp },
@@ -62,6 +67,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.DotProduct2, HandleDotProduct },
                 { USILInstructionType.DotProduct3, HandleDotProduct },
                 { USILInstructionType.DotProduct4, HandleDotProduct },
+                { USILInstructionType.Lerp, HandleLerp },
+                { USILInstructionType.Normalize, HandleNormalize },
+                { USILInstructionType.Length, HandleLength },
                 { USILInstructionType.Sample, HandleSample },
                 { USILInstructionType.SampleComparison, HandleSample },
                 { USILInstructionType.SampleComparisonLODZero, HandleSample },
@@ -69,6 +77,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.SampleDerivative, HandleSampleDerivative },
                 { USILInstructionType.LoadResource, HandleLoadResource },
                 { USILInstructionType.LoadResourceMultisampled, HandleLoadResource },
+                { USILInstructionType.LoadResourceRaw, HandleLoadResourceRaw },
                 { USILInstructionType.LoadResourceStructured, HandleLoadResourceStructured },
                 { USILInstructionType.Discard, HandleDiscard },
                 { USILInstructionType.ResourceDimensionInfo, HandleResourceDimensionInfo },
@@ -101,6 +110,8 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.GreaterThanOrEqual, HandleGreaterThanOrEqual },
                 { USILInstructionType.Return, HandleReturn },
                 { USILInstructionType.MultiplyMatrixByVector, MultiplyMatrixByVector },
+                { USILInstructionType.UnityObjectToClipPos, HandleUnityObjectToClipPos },
+                { USILInstructionType.UnityObjectToWorldNormal, HandleUnityObjectToWorldNormal },
                 { USILInstructionType.Comment, HandleComment }
             };
         }
@@ -116,10 +127,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 _indentLevel++;
                 foreach (USILInputOutput input in _shader.inputs)
                 {
-                    // Fallback to "float4" if format property isn't found/set properly yet
-                    string format = string.IsNullOrEmpty(input.type) ? "float4" : "float4"; 
-                    // To use the real format string, ensure 'format' exists on USILInputOutput and use:
-                    // string format = string.IsNullOrEmpty(input.format) ? "float4" : input.format;
+                    string format = string.IsNullOrWhiteSpace(input.format) ? "float4" : input.format;
                     AppendLine($"{format} {input.name} : {input.type};");
                 }
                 _indentLevel--;
@@ -130,7 +138,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 _indentLevel++;
                 foreach (USILInputOutput output in _shader.outputs)
                 {
-                    string format = "float4"; // Replace with output.format if added to USILInputOutput
+                    string format = string.IsNullOrWhiteSpace(output.format) ? "float4" : output.format;
                     AppendLine($"{format} {output.name} : {output.type};");
                 }
                 _indentLevel--;
@@ -143,7 +151,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 _indentLevel++;
                 foreach (USILInputOutput output in _shader.outputs)
                 {
-                    string format = "float4"; // Replace with output.format if added to USILInputOutput
+                    string format = string.IsNullOrWhiteSpace(output.format) ? "float4" : output.format;
                     AppendLine($"{format} {output.name} : {output.type};");
                 }
                 _indentLevel--;
@@ -186,7 +194,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 string args = $"{USILConstants.VERT_TO_FRAG_STRUCT_NAME} {USILConstants.FRAG_INPUT_NAME}";
                 if (frontFace != null)
                 {
-                    string format = "float"; // Replace with frontFace.format if added
+                    string format = string.IsNullOrWhiteSpace(frontFace.format) ? "float" : frontFace.format;
                     args += $", {format} {frontFace.name}: VFACE";
                 }
                 AppendLine($"{USILConstants.FRAG_OUTPUT_STRUCT_NAME} frag({args})");
@@ -317,6 +325,48 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
 
+        private void HandleBitFieldInsert(USILInstruction inst)
+        {
+            // bfi(width, offset, src, base)
+            List<USILOperand> srcOps = inst.srcOperands;
+            string width = BuildUIntCast(srcOps[0]);
+            string offset = BuildUIntCast(srcOps[1]);
+            string src = BuildUIntCast(srcOps[2]);
+            string baseValue = BuildUIntCast(srcOps[3]);
+            string mask = $"((1u << {width}) - 1u)";
+            string value = $"(({baseValue} & ~({mask} << {offset})) | (({src} & {mask}) << {offset}))";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleBitFieldExtractUnsigned(USILInstruction inst)
+        {
+            // ubfe(width, offset, value)
+            List<USILOperand> srcOps = inst.srcOperands;
+            string width = BuildUIntCast(srcOps[0]);
+            string offset = BuildUIntCast(srcOps[1]);
+            string valueOperand = BuildUIntCast(srcOps[2]);
+            string mask = $"((1u << {width}) - 1u)";
+            string value = $"(({valueOperand} >> {offset}) & {mask})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleBitFieldExtractSigned(USILInstruction inst)
+        {
+            // ibfe(width, offset, value)
+            List<USILOperand> srcOps = inst.srcOperands;
+            string width = BuildUIntCast(srcOps[0]);
+            string offset = BuildUIntCast(srcOps[1]);
+            string valueOperand = BuildUIntCast(srcOps[2]);
+            string mask = $"((1u << {width}) - 1u)";
+            string extracted = $"(({valueOperand} >> {offset}) & {mask})";
+            string signShift = $"(32u - {width})";
+            string value = $"(asint(({extracted}) << {signShift}) >> {signShift})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
         private void HandleMinimum(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
@@ -416,7 +466,15 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleIntToFloat(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"floor({srcOps[0]})";
+            string value = BuildNumericCast("float", srcOps[0]);
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleUIntToFloat(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = BuildNumericCast("float", srcOps[0]);
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -424,7 +482,15 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleFloatToInt(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"asint({srcOps[0]})";
+            string value = BuildNumericCast("int", srcOps[0]);
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleFloatToUInt(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = BuildNumericCast("uint", srcOps[0]);
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -516,6 +582,30 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
 
+        private void HandleLerp(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = WrapSaturate(inst, $"lerp({srcOps[0]}, {srcOps[1]}, {srcOps[2]})");
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleNormalize(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = WrapSaturate(inst, $"normalize({srcOps[0]})");
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleLength(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = WrapSaturate(inst, $"length({srcOps[0]})");
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
         private void HandleSample(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
@@ -534,7 +624,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                     USILOperandType.SamplerCube => $"texCUBE({args})",
                     USILOperandType.Sampler2DArray => $"UNITY_SAMPLE_TEX2DARRAY({args})",
                     USILOperandType.SamplerCubeArray => $"UNITY_SAMPLE_TEXCUBEARRAY({args})",
-                    _ => $"texND({args})"
+                    _ => $"tex2D({args})"
                 };
             }
             else
@@ -547,7 +637,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                     USILOperandType.SamplerCube => $"UNITY_SAMPLE_TEXCUBE_SAMPLER({args})",
                     USILOperandType.Sampler2DArray => $"UNITY_SAMPLE_TEX2DARRAY_SAMPLER({args})",
                     USILOperandType.SamplerCubeArray => $"UNITY_SAMPLE_TEXCUBEARRAY_SAMPLER({args})",
-                    _ => $"texND({args})"
+                    _ => $"tex2D({srcOps[2]}, {srcOps[0]})"
                 };
             }
             string comment = CommentString(inst);
@@ -576,7 +666,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                     USILOperandType.SamplerCube => $"texCUBElod({args})",
                     USILOperandType.Sampler2DArray => $"UNITY_SAMPLE_TEX2DARRAY_LOD({args})",
                     USILOperandType.SamplerCubeArray => $"UNITY_SAMPLE_TEXCUBEARRAY_LOD({args})",
-                    _ => $"texNDlod({args})"
+                    _ => $"tex2Dlod({args})"
                 };
             }
             else
@@ -589,7 +679,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                     USILOperandType.SamplerCube => $"UNITY_SAMPLE_TEXCUBE_SAMPLER({args})",
                     USILOperandType.Sampler2DArray => $"UNITY_SAMPLE_TEX2DARRAY_SAMPLER({args})",
                     USILOperandType.SamplerCubeArray => $"UNITY_SAMPLE_TEXCUBEARRAY_SAMPLER({args})",
-                    _ => $"texND({args})"
+                    _ => srcOps[0].mask.Length == 2
+                        ? $"tex2Dlod({srcOps[2]}, float4({srcOps[0]}, 0, {srcOps[3]}))"
+                        : $"tex2Dlod({srcOps[2]}, float4({srcOps[0]}, {srcOps[3]}))"
                 };
             }
             string comment = CommentString(inst);
@@ -606,7 +698,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 USILOperandType.Sampler2D => $"tex2Dgrad({args})",
                 USILOperandType.Sampler3D => $"tex3Dgrad({args})",
                 USILOperandType.SamplerCube => $"texCUBEgrad({args})",
-                _ => $"texNDgrad({args})"
+                _ => $"tex2Dgrad({args})"
             };
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
@@ -615,7 +707,26 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleLoadResource(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"Load({srcOps[1]}, {srcOps[0]})";
+            string resource = srcOps[1].ToString(true);
+            string value = $"Load({resource}, {srcOps[0]})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleLoadResourceRaw(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            int width = Math.Clamp(inst.destOperand?.GetValueCount() ?? 1, 1, 4);
+            string loadFn = width switch
+            {
+                1 => "Load",
+                2 => "Load2",
+                3 => "Load3",
+                _ => "Load4"
+            };
+            string resource = srcOps[1].ToString(true);
+            string byteAddress = BuildUIntCast(srcOps[0]);
+            string value = $"{resource}.{loadFn}({byteAddress})";
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -623,7 +734,47 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleLoadResourceStructured(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"((float4[1]){srcOps[2]}.Load({srcOps[0]}))[{srcOps[1].immValueInt[0] / 16}]";
+            string resource = srcOps[2].ToString(true);
+            USILOperand structureIndexOperand = srcOps[0];
+            USILOperand byteOffsetOperand = srcOps[1];
+
+            bool hasImmediateByteOffset = byteOffsetOperand.immValueInt != null && byteOffsetOperand.immValueInt.Length > 0;
+            int byteOffset = hasImmediateByteOffset ? byteOffsetOperand.immValueInt[0] : 0;
+            int structureAdd = byteOffset / 16;
+            int componentOffset = (byteOffset % 16) / 4;
+
+            string structureIndexExpr = structureAdd == 0
+                ? $"{structureIndexOperand}"
+                : $"({structureIndexOperand} + {structureAdd})";
+            string loadExpr = $"{resource}.Load({structureIndexExpr})";
+
+            int destWidth = Math.Clamp(inst.destOperand?.GetValueCount() ?? 1, 1, 4);
+            string value;
+            if (destWidth == 1)
+            {
+                int component = hasImmediateByteOffset ? Math.Clamp(componentOffset, 0, 3) : 0;
+                value = $"{loadExpr}.{USILConstants.MASK_CHARS[component]}";
+            }
+            else if (destWidth < 4)
+            {
+                int swizzleStart = hasImmediateByteOffset ? Math.Clamp(componentOffset, 0, 3) : 0;
+                int swizzleCount = Math.Min(destWidth, 4 - swizzleStart);
+                value = $"{loadExpr}.{BuildMaskText(swizzleStart, swizzleCount)}";
+            }
+            else
+            {
+                value = loadExpr;
+            }
+
+            if (!hasImmediateByteOffset)
+            {
+                value += $" /* dynamic structured byte offset {byteOffsetOperand} not fully resolved */";
+            }
+            else if (destWidth == 4 && componentOffset != 0)
+            {
+                value += $" /* structured byte offset {byteOffset} alignment fallback */";
+            }
+
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -883,9 +1034,25 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void MultiplyMatrixByVector(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"mul({srcOps[0]}, {srcOps[1]})";
+            string value = srcOps[0].transposeMatrix
+                ? $"mul({srcOps[1]}, {srcOps[0]})"
+                : $"mul({srcOps[0]}, {srcOps[1]})";
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleUnityObjectToClipPos(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = UnityObjectToClipPos({srcOps[0]});");
+        }
+
+        private void HandleUnityObjectToWorldNormal(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = UnityObjectToWorldNormal({srcOps[0]});");
         }
 
         private void HandleComment(USILInstruction inst)
@@ -900,6 +1067,37 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 str = $"saturate({str})";
             }
             return str;
+        }
+
+        private static string BuildNumericCast(string typeName, USILOperand operand)
+        {
+            int width = Math.Max(1, operand.GetValueCount());
+            if (width == 1)
+            {
+                return $"{typeName}({operand})";
+            }
+            return $"{typeName}{width}({operand})";
+        }
+
+        private static string BuildUIntCast(USILOperand operand)
+        {
+            int width = Math.Max(1, operand.GetValueCount());
+            if (width == 1)
+            {
+                return $"uint({operand})";
+            }
+            return $"uint{width}({operand})";
+        }
+
+        private static string BuildMaskText(int start, int count)
+        {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < count; i++)
+            {
+                int maskIndex = Math.Clamp(start + i, 0, 3);
+                sb.Append(USILConstants.MASK_CHARS[maskIndex]);
+            }
+            return sb.ToString();
         }
 
         private void AppendLine(string line)

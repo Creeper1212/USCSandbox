@@ -32,4 +32,12 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\Files\classdata.tpk">
+      <Link>classdata.tpk</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

@@ -7,6 +7,7 @@ using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using USCSandbox;
 using USCSandbox.Processor;
 using USCSandbox.UltraShaderConverter.NVN;
 using USCSandbox.UltraShaderConverter.UShader.NVN;

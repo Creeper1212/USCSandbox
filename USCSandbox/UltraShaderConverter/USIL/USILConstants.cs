@@ -1,4 +1,4 @@
-namespace USCSandbox.UltraShaderConverter.USIL
+namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
 {
     public static class USILConstants
     {

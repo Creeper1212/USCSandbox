@@ -27,7 +27,8 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
             new USILGetDimensionsFixer(),
 
 			// do detection optimizers which usually depend on metadders
-			//new USILMatrixMulOptimizer(), // I don't trust this code so it's commented for now
+			new USILMatrixMulOptimizer(),
+            new USILHighLevelMathOptimizer(),
 			
 			// do simplification optimizers last when detection has been finished
 			new USILCompareOrderOptimizer(),

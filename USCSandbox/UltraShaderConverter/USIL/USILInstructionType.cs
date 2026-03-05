@@ -15,6 +15,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         Or, //dx: or
         Xor, //dx: xor
         Not, //dx: not
+        BitFieldInsert, //dx: bfi
+        BitFieldExtractUnsigned, //dx: ubfe
+        BitFieldExtractSigned, //dx: ibfe
 
         ShiftLeft, //dx: ishl
         ShiftRight, //dx: ishr
@@ -46,6 +49,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         DotProduct2, //dx: dp2
         DotProduct3, //dx: dp3
         DotProduct4, //dx: dp4
+        Lerp, //dx: --- (mad/add/sub pattern)
+        Normalize, //dx: --- (dp + rsq + mul)
+        Length, //dx: --- (dp + sqrt)
 
         Reciprocal, //dx: rcp
         Fractional, //dx: frc
@@ -95,6 +101,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         SampleDerivative, //dx: sample_d
         LoadResource, //dx: ld
         LoadResourceMultisampled, //dx: ld2dms
+        LoadResourceRaw, //dx: ld_raw
         LoadResourceStructured, //dx: ld_structured
 
         // artifical instructions

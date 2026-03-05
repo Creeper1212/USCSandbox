@@ -1,6 +1,7 @@
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL;
 using AssetRipper.Primitives;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra.Decompressors.LZ4;
@@ -12,10 +13,10 @@ namespace USCSandbox.Processor
 {
     public class ShaderProcessor
     {
-        private AssetTypeValueField _shaderBf;
-        private GPUPlatform _platformId;
-        private UnityVersion _engVer;
-        private StringBuilderIndented _sb;
+        private readonly AssetTypeValueField _shaderBf;
+        private readonly GPUPlatform _platformId;
+        private readonly UnityVersion _engVer;
+        private readonly StringBuilderIndented _sb;
 
         public ShaderProcessor(AssetTypeValueField shaderBf, UnityVersion engVer, GPUPlatform platformId)
         {
@@ -32,23 +33,29 @@ namespace USCSandbox.Processor
             var parsedForm = _shaderBf["m_ParsedForm"];
             var name = parsedForm["m_Name"].AsString;
             var keywordNames = parsedForm["m_KeywordNames.Array"].Select(i => i.AsString).ToList();
+            Logger.Info($"ShaderProcessor.Process: shader='{name}', platform={_platformId}, unity={_engVer}");
+            Logger.Debug($"Parsed keyword names ({keywordNames.Count}): {string.Join(", ", keywordNames)}");
 
             var platforms = _shaderBf["platforms.Array"].Select(i => i.AsInt).ToList();
             var offsets = _shaderBf["offsets.Array"];
             var compressedLengths = _shaderBf["compressedLengths.Array"];
             var decompressedLengths = _shaderBf["decompressedLengths.Array"];
             var compressedBlob = _shaderBf["compressedBlob.Array"].AsByteArray;
+            Logger.Debug($"Compressed blob length: {compressedBlob.Length} bytes");
 
             var selectedIndex = platforms.IndexOf((int)_platformId);
             
             if (selectedIndex == -1)
             {
+                Logger.Warning($"Shader does not contain requested platform {_platformId}. Available raw platform ids: {string.Join(", ", platforms)}");
                 return $"// Shader does not contain platform: {_platformId}\n";
             }
+            Logger.Info($"Selected platform index: {selectedIndex} (raw id {platforms[selectedIndex]})");
 
             // Unity 2019.3+ splits shaders into segments. We check if the elements contain arrays.
             bool hasSegments = offsets[selectedIndex].Children.Count > 0;
             int segmentCount = hasSegments ? offsets[selectedIndex]["Array"].Children.Count : 1;
+            Logger.Info($"Segmented shader blob: {hasSegments}, segment count: {segmentCount}");
 
             byte[][] decompressedBlobs = new byte[segmentCount][];
             for (int i = 0; i < segmentCount; i++)
@@ -56,6 +63,7 @@ namespace USCSandbox.Processor
                 uint selectedOffset = hasSegments ? offsets[selectedIndex]["Array"][i].AsUInt : offsets[selectedIndex].AsUInt;
                 uint selectedCompressedLength = hasSegments ? compressedLengths[selectedIndex]["Array"][i].AsUInt : compressedLengths[selectedIndex].AsUInt;
                 uint selectedDecompressedLength = hasSegments ? decompressedLengths[selectedIndex]["Array"][i].AsUInt : decompressedLengths[selectedIndex].AsUInt;
+                Logger.Debug($"Decompressing segment {i}: offset={selectedOffset}, compressed={selectedCompressedLength}, decompressed={selectedDecompressedLength}");
 
                 decompressedBlobs[i] = new byte[selectedDecompressedLength];
                 
@@ -68,6 +76,7 @@ namespace USCSandbox.Processor
             }
 
             var blobManager = new BlobManager(decompressedBlobs, _engVer);
+            Logger.Info("BlobManager initialized from decompressed blobs.");
 
             _sb.AppendLine($"Shader \"{name}\" {{");
             _sb.Indent();
@@ -79,6 +88,7 @@ namespace USCSandbox.Processor
             }
             _sb.Unindent();
             _sb.AppendLine("}");
+            Logger.Info($"ShaderProcessor.Process complete: '{name}'");
 
             return _sb.ToString();
         }
@@ -90,254 +100,198 @@ namespace USCSandbox.Processor
             string passName)
         {
             _sb.AppendLine("CGPROGRAM");
-
-            var defineSb = new StringBuilder();
-            var passSb = new StringBuilder();
-            
-            defineSb.AppendLine(new string(' ', depth * 4));
-            passSb.AppendLine(new string(' ', depth * 4));
+            string indent = new string(' ', depth * 4);
             var basketsInfo = baskets
-                .Select(x => 
-                new 
+                .Select(x => new
                 {
                     progInfo = x.ProgramInfo,
                     subProgInfo = x.SubProgramInfo,
                     index = x.ParameterBlobIndex,
                     subProg = blobManager.GetShaderSubProgram((int)x.SubProgramInfo.BlobIndex)
                 })
-                .OrderBy(x => x.subProg.GetProgramType(_engVer))
-                .ThenByDescending(x => x.subProg.GlobalKeywords.Concat(x.subProg.LocalKeywords).Count())
+                .OrderBy(x => x.subProg.GetProgramType(_engVer).ToString(), StringComparer.Ordinal)
+                .ThenByDescending(x => x.subProg.GlobalKeywords.Count + x.subProg.LocalKeywords.Count)
                 .ToList();
+            Logger.Debug($"WritePassBody('{passName}'): basket variants={basketsInfo.Count}");
 
-            var subPrograms = basketsInfo.Select(x => x.subProg).ToList();
-            ShaderGpuProgramType[] vertTypes =[ShaderGpuProgramType.DX11VertexSM40, ShaderGpuProgramType.ConsoleVS];
-            ShaderGpuProgramType[] fragTypes =[ShaderGpuProgramType.DX11PixelSM40, ShaderGpuProgramType.ConsoleFS];
-            var firstVert = subPrograms.FirstOrDefault(x => vertTypes.Contains(x.GetProgramType(_engVer)));
-            var firstFrag = subPrograms.FirstOrDefault(x => fragTypes.Contains(x.GetProgramType(_engVer)));
-            
-            if (firstVert is not null)
+            bool hasVertexVariant = basketsInfo.Any(x => IsVertexProgramType(x.subProg.GetProgramType(_engVer)));
+            bool hasFragmentVariant = basketsInfo.Any(x => IsFragmentProgramType(x.subProg.GetProgramType(_engVer)));
+            Logger.Debug($"WritePassBody('{passName}'): hasVertex={hasVertexVariant}, hasFragment={hasFragmentVariant}");
+
+            if (hasVertexVariant)
             {
-                defineSb.Append(new string(' ', depth * 4));
-                defineSb.AppendLine("#pragma vertex vert");
+                _sb.AppendNoIndent($"{indent}#pragma vertex vert\n");
+            }
+            if (hasFragmentVariant)
+            {
+                _sb.AppendNoIndent($"{indent}#pragma fragment frag\n");
             }
 
-            if (firstFrag is not null)
-            {
-                defineSb.Append(new string(' ', depth * 4));
-                defineSb.AppendLine("#pragma fragment frag");
-            }
-
-            defineSb.AppendLine();
-
-            var allKeywordsCombinations = subPrograms.Select(x => x.GlobalKeywords.Concat(x.LocalKeywords).Order()).ToList();
-            HashSet<string> allUniqueKeywords = allKeywordsCombinations.SelectMany(x => x).ToHashSet();
-            int leastKeywordsAmount = allKeywordsCombinations.Min(x => x.Count());
-            List<string> mandatoryKeywords =[];
-            
-            List<string> optionalKeywords = new List<string>();
-            foreach (string keyword in allUniqueKeywords)
-            {
-                if (allKeywordsCombinations.All(x => x.Contains(keyword)))
-                {
-                    defineSb.Append(new string(' ', depth * 4));
-                    defineSb.AppendLine($"#pragma multi_compile {keyword}");
-                    mandatoryKeywords.Add(keyword);
-                }
-                else
-                {
-                    optionalKeywords.Add(keyword);
-                }
-            }
-
-            if (leastKeywordsAmount > mandatoryKeywords.Count)
-            {
-                var leastAmountCombinations = allKeywordsCombinations
-                    .Where(x => x.Count() == leastKeywordsAmount)
-                    .Select(x => x.Except(mandatoryKeywords).ToList())
-                    .ToList();
-                int multiCompileKeywordIndex = 0;
-                while (multiCompileKeywordIndex < leastKeywordsAmount - mandatoryKeywords.Count)
-                {
-                    var multiCompileKeywords = leastAmountCombinations
-                        .Select(x => x[multiCompileKeywordIndex])
-                        .ToHashSet();
-                
-                    defineSb.Append(new string(' ', depth * 4));
-                    defineSb.AppendLine($"#pragma multi_compile {string.Join(" ", multiCompileKeywords)}");
-                    optionalKeywords = optionalKeywords.Except(multiCompileKeywords).ToList();
-                    multiCompileKeywordIndex++;
-                }
-            }
-
-            foreach (string keyword in optionalKeywords)
-            {
-                defineSb.Append(new string(' ', depth * 4));
-                defineSb.AppendLine($"#pragma shader_feature {keyword}");
-            }
-            
-            bool encounterdVert = false;
-            bool encounterdFrag = false;
-            
-            var declaredCBufs = subPrograms
-                .Select(x => String.Join("-", x.GlobalKeywords.Concat(x.LocalKeywords).Order()))
-                .Distinct()
-                .ToDictionary(x => x, _ => new HashSet<string>());
-            
-            var lastVertext = basketsInfo.LastOrDefault(x => vertTypes.Contains(x.subProg.GetProgramType(_engVer)));
-            var lastFragment = basketsInfo.LastOrDefault(x => fragTypes.Contains(x.subProg.GetProgramType(_engVer)));
-
-            bool noVertexVariants = subPrograms.Count(x => vertTypes.Contains(x.GetProgramType(_engVer))) <= 1;
-            bool noFragmentVariants = subPrograms.Count(x => fragTypes.Contains(x.GetProgramType(_engVer))) <= 1;
-            
+            SortedSet<string> uniquePassKeywords = new(StringComparer.Ordinal);
             foreach (var basket in basketsInfo)
             {
-                var structSb = new StringBuilder();
-                var cbufferSb = new StringBuilder();
-                var texSb = new StringBuilder();
-                var memeSb = new StringBuilder();
-                var codeSb = new StringBuilder();
-                
-                var progInfo = basket.progInfo;
-                var subProgInfo = basket.subProgInfo;
-                var index = basket.index;
-
-                var subProg = blobManager.GetShaderSubProgram((int)subProgInfo.BlobIndex);
-
-                ShaderParams param;
-                if (index != -1)
+                foreach (string keyword in basket.subProg.GlobalKeywords.Concat(basket.subProg.LocalKeywords))
                 {
-                    param = blobManager.GetShaderParams(index);
+                    if (!string.IsNullOrWhiteSpace(keyword))
+                    {
+                        uniquePassKeywords.Add(keyword);
+                    }
+                }
+            }
+
+            foreach (string keyword in uniquePassKeywords)
+            {
+                _sb.AppendNoIndent($"{indent}#pragma multi_compile_local _ {keyword}\n");
+            }
+            Logger.Debug($"WritePassBody('{passName}'): unique pass keywords={uniquePassKeywords.Count}");
+            _sb.AppendNoIndent("\n");
+
+            var preparedVariants = new List<(
+                ShaderGpuProgramType ProgramType,
+                string[] Keywords,
+                string KeywordSet,
+                ShaderParams? Params,
+                UShaderProgram? Program,
+                bool Unsupported)>();
+            Dictionary<string, Dictionary<int, FallbackResourceKind>> fallbackResourcesByKeywordSet = new(StringComparer.Ordinal);
+            Dictionary<string, HashSet<int>> fallbackSamplersByKeywordSet = new(StringComparer.Ordinal);
+            foreach (var basket in basketsInfo)
+            {
+                var subProg = basket.subProg;
+                ShaderGpuProgramType programType = subProg.GetProgramType(_engVer);
+                string[] keywords = subProg.GlobalKeywords
+                    .Concat(subProg.LocalKeywords)
+                    .Where(k => !string.IsNullOrWhiteSpace(k))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .ToArray();
+                Logger.Debug($"Variant: pass='{passName}', programType={programType}, keywords=[{string.Join(", ", keywords)}]");
+
+                ShaderParams? param = basket.index >= 0
+                    ? blobManager.GetShaderParams(basket.index)
+                    : subProg.ShaderParams;
+                string keywordSet = string.Join("-", keywords);
+                if (param is null)
+                {
+                    Logger.Debug($"Variant has null ShaderParams: pass='{passName}', programType={programType}, paramIndex={basket.index}");
                 }
                 else
                 {
-                    param = subProg.ShaderParams;
+                    param.CombineCommon(basket.progInfo);
                 }
-                
-                if (param != null)
+
+                USCShaderConverter converter = new USCShaderConverter();
+                if (programType.IsDirectX())
                 {
-                    param.CombineCommon(progInfo);
+                    Logger.Debug($"Loading DX shader bytecode: pass='{passName}', programType={programType}, dataLength={subProg.ProgramData.Length}");
+                    converter.LoadDirectXCompiledShader(new MemoryStream(subProg.ProgramData), _platformId, _engVer);
+                    converter.ConvertDxShaderToUShaderProgram();
                 }
-
-                var programType = subProg.GetProgramType(_engVer);
-                var graphicApi = _platformId;
-
-                var keywords = subProg.GlobalKeywords.Concat(subProg.LocalKeywords).Order().ToArray();
-
-                if ((!noVertexVariants && basket == lastVertext) || (!noFragmentVariants && basket == lastFragment))
+                else if (programType.ToGPUPlatform() == GPUPlatform.Switch)
                 {
-                    structSb.AppendLine();
-                    structSb.Append(new string(' ', depth * 4));
-                    structSb.Append("#else");
+                    Logger.Debug($"Loading NVN shader bytecode: pass='{passName}', programType={programType}, dataLength={subProg.ProgramData.Length}");
+                    converter.LoadUnityNvnShader(new MemoryStream(subProg.ProgramData), _platformId, _engVer);
+                    converter.ConvertNvnShaderToUShaderProgram(programType);
                 }
-                else if ((!noVertexVariants && programType == ShaderGpuProgramType.DX11VertexSM40)
-                        || (!noFragmentVariants && programType == ShaderGpuProgramType.DX11PixelSM40))
+                else
                 {
-                    string preprocessorDirective;
-                    if ((!encounterdVert && programType == ShaderGpuProgramType.DX11VertexSM40)
-                        || (!encounterdFrag && programType == ShaderGpuProgramType.DX11PixelSM40))
-                    {
-                        preprocessorDirective = "if";
-                        if (programType == ShaderGpuProgramType.DX11VertexSM40)
-                        {
-                            encounterdVert = true;
-                        }
-                        else
-                        {
-                            encounterdFrag = true;
-                            structSb.Append(new string(' ', depth * 4));
-                            structSb.AppendLine("#endif");
-                            structSb.AppendLine();
-                        }
-                    }
-                    else
-                    {
-                        preprocessorDirective = "elif";
-                    }
-                
-                    structSb.AppendLine();
-                    structSb.Append(new string(' ', depth * 4));
-                    structSb.Append($"#{preprocessorDirective} {string.Join(" && ", keywords)} // {passName}:{programType}");
+                    Logger.Warning($"Unsupported program type skipped: pass='{passName}', programType={programType}");
+                    preparedVariants.Add((programType, keywords, keywordSet, param, null, true));
+                    continue;
                 }
-                
-                if (param != null)
+
+                if (param is not null)
                 {
-                    cbufferSb.Append(new string(' ', depth * 4));
-                    cbufferSb.AppendLine($"// CBs for {programType}");
-                    
-                    foreach (ConstantBuffer cbuffer in param.ConstantBuffers)
-                    {
-                        cbufferSb.Append(WritePassCBuffer(param, declaredCBufs[string.Join("-", keywords)], cbuffer, depth));
-                    }
-
-                    texSb.Append(new string(' ', depth * 4));
-                    texSb.AppendLine($"// Textures for {programType}");
-
-                    texSb.Append(WritePassTextures(param, declaredCBufs[string.Join("-", keywords)], depth));
+                    converter.ApplyMetadataToProgram(subProg, param, _engVer);
                 }
-                
-                switch (programType)
-                {
-                    case ShaderGpuProgramType.DX11VertexSM40:
-                    case ShaderGpuProgramType.DX11PixelSM40:
-                    {
-                        var conv = new USCShaderConverter();
-                        conv.LoadDirectXCompiledShader(new MemoryStream(subProg.ProgramData), graphicApi, _engVer);
-                        conv.ConvertDxShaderToUShaderProgram();
-                        conv.ApplyMetadataToProgram(subProg, param, _engVer);
 
-                        UShaderFunctionToHLSL hlslConverter = new UShaderFunctionToHLSL(conv.ShaderProgram!, depth);
-                        
-                        structSb.AppendLine();
-                        codeSb.AppendLine();
-                        
-                        structSb.Append(hlslConverter.WriteStruct());
-                        structSb.AppendLine();
-                        codeSb.Append(hlslConverter.WriteFunction());
+                Dictionary<int, FallbackResourceKind> variantResourceKinds = new();
+                HashSet<int> variantSamplerRegisters = new();
+                CollectFallbackDeclarationHints(converter.ShaderProgram!, variantResourceKinds, variantSamplerRegisters);
+                MergeFallbackDeclarationHints(
+                    keywordSet,
+                    variantResourceKinds,
+                    variantSamplerRegisters,
+                    fallbackResourcesByKeywordSet,
+                    fallbackSamplersByKeywordSet);
 
-                        break;
-                    }
-                    case ShaderGpuProgramType.ConsoleVS:
-                    case ShaderGpuProgramType.ConsoleFS:
-                    {
-                        var conv = new USCShaderConverter();
-                        conv.LoadUnityNvnShader(new MemoryStream(subProg.ProgramData), graphicApi, _engVer);
-                        conv.ConvertNvnShaderToUShaderProgram(programType);
-                        conv.ApplyMetadataToProgram(subProg, param, _engVer);
-
-                        UShaderFunctionToHLSL hlslConverter = new UShaderFunctionToHLSL(conv.ShaderProgram!, depth);
-                        if ((!encounterdVert && programType == ShaderGpuProgramType.ConsoleVS)
-                            || (!encounterdFrag && programType == ShaderGpuProgramType.ConsoleFS))
-                        {
-                            structSb.Append(hlslConverter.WriteStruct());
-                            structSb.AppendLine();
-                            if (programType == ShaderGpuProgramType.ConsoleVS)
-                                encounterdVert = true;
-                            else
-                                encounterdFrag = true;
-                        }
-
-                        codeSb.Append(new string(' ', depth * 4));
-                        codeSb.AppendLine("// Keywords: " + string.Join(", ", keywords));
-                        codeSb.Append(hlslConverter.WriteFunction());
-
-                        break;
-                    }
-                }
-                passSb.Append(structSb.ToString());
-                passSb.Append(cbufferSb.ToString());
-                passSb.Append(texSb.ToString());
-                passSb.Append(memeSb.ToString());
-                passSb.Append(codeSb.ToString());
+                preparedVariants.Add((programType, keywords, keywordSet, param, converter.ShaderProgram, false));
             }
 
-            if (!noFragmentVariants)
+            Dictionary<string, HashSet<string>> declaredCBufs = new(StringComparer.Ordinal);
+            foreach (var variant in preparedVariants)
             {
-                passSb.Append(new string(' ', depth * 4));
-                passSb.AppendLine("#endif");
-            }
+                bool hasKeywords = variant.Keywords.Length > 0;
+                if (hasKeywords)
+                {
+                    _sb.AppendNoIndent($"{indent}#if {string.Join(" &&", variant.Keywords)} // {passName}:{variant.ProgramType}\n");
+                }
 
-            _sb.AppendNoIndent(defineSb.ToString());
-            _sb.AppendNoIndent(passSb.ToString());
+                if (!declaredCBufs.TryGetValue(variant.KeywordSet, out HashSet<string>? declaredSet))
+                {
+                    declaredSet = new HashSet<string>(StringComparer.Ordinal);
+                    declaredCBufs.Add(variant.KeywordSet, declaredSet);
+                }
+
+                if (variant.Params is not null)
+                {
+                    _sb.AppendNoIndent($"{indent}// CBs for {variant.ProgramType}\n");
+                    foreach (ConstantBuffer cbuffer in variant.Params.ConstantBuffers)
+                    {
+                        _sb.AppendNoIndent(WritePassCBuffer(variant.Params, declaredSet, cbuffer, depth));
+                    }
+
+                    _sb.AppendNoIndent($"{indent}// Textures for {variant.ProgramType}\n");
+                    _sb.AppendNoIndent(WritePassTextures(variant.Params, declaredSet, depth));
+
+                    _sb.AppendNoIndent($"{indent}// Buffers for {variant.ProgramType}\n");
+                    _sb.AppendNoIndent(WritePassBuffers(variant.Params, declaredSet, depth));
+                    Logger.Debug($"Applied metadata: cbufferCount={variant.Params.ConstantBuffers.Count}, textureCount={variant.Params.TextureParameters.Count}");
+                }
+
+                if (variant.Unsupported || variant.Program is null)
+                {
+                    _sb.AppendNoIndent($"{indent}// Unsupported program type {variant.ProgramType}\n");
+                    if (hasKeywords)
+                    {
+                        _sb.AppendNoIndent($"{indent}#endif\n");
+                    }
+                    _sb.AppendNoIndent("\n");
+                    continue;
+                }
+
+                _sb.AppendNoIndent($"{indent}// Fallback resources for {variant.ProgramType}\n");
+                Dictionary<int, FallbackResourceKind> resourceKinds = fallbackResourcesByKeywordSet.TryGetValue(variant.KeywordSet, out Dictionary<int, FallbackResourceKind>? mergedKinds)
+                    ? mergedKinds
+                    : new Dictionary<int, FallbackResourceKind>();
+                HashSet<int> samplerRegisters = fallbackSamplersByKeywordSet.TryGetValue(variant.KeywordSet, out HashSet<int>? mergedSamplers)
+                    ? mergedSamplers
+                    : new HashSet<int>();
+                _sb.AppendNoIndent(WriteFallbackResourceDeclarations(resourceKinds, samplerRegisters, declaredSet, depth));
+
+                UShaderFunctionToHLSL hlslConverter = new UShaderFunctionToHLSL(variant.Program, depth);
+                if (IsVertexProgramType(variant.ProgramType))
+                {
+                    _sb.AppendNoIndent(hlslConverter.WriteStruct());
+                    _sb.AppendNoIndent("\n");
+                    _sb.AppendNoIndent(hlslConverter.WriteFunction());
+                }
+                else if (IsFragmentProgramType(variant.ProgramType))
+                {
+                    _sb.AppendNoIndent(hlslConverter.WriteFunction());
+                }
+                else
+                {
+                    _sb.AppendNoIndent(hlslConverter.WriteFunction());
+                }
+
+                if (hasKeywords)
+                {
+                    _sb.AppendNoIndent($"{indent}#endif\n");
+                }
+                _sb.AppendNoIndent("\n");
+                Logger.Debug($"Variant emitted successfully: pass='{passName}', programType={variant.ProgramType}");
+            }
 
             _sb.AppendLine("ENDCG");
             _sb.AppendLine("");
@@ -443,6 +397,232 @@ namespace USCSandbox.Processor
             return sb.ToString();
         }
 
+        private string WritePassBuffers(
+            ShaderParams shaderParams, HashSet<string> declaredNames, int depth)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            foreach (BufferBinding buffer in shaderParams.Buffers)
+            {
+                string name = buffer.Name;
+                if (!declaredNames.Contains(name))
+                {
+                    sb.Append(new string(' ', depth * 4));
+                    sb.AppendLine($"ByteAddressBuffer {name}; // {buffer.Index}");
+                    declaredNames.Add(name);
+                }
+            }
+
+            foreach (UAVParameter uav in shaderParams.UAVs)
+            {
+                string name = uav.Name;
+                if (!declaredNames.Contains(name))
+                {
+                    sb.Append(new string(' ', depth * 4));
+                    sb.AppendLine($"RWByteAddressBuffer {name}; // {uav.Index}");
+                    declaredNames.Add(name);
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private string WriteFallbackResourceDeclarations(
+            Dictionary<int, FallbackResourceKind> resourceKinds,
+            HashSet<int> unresolvedSamplerRegisters,
+            HashSet<string> declaredNames,
+            int depth)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            foreach (KeyValuePair<int, FallbackResourceKind> fallback in resourceKinds.OrderBy(p => p.Key))
+            {
+                string name = $"{USILOperand.GetTypeShortForm(USILOperandType.ResourceRegister)}{fallback.Key}";
+                if (!declaredNames.Contains(name))
+                {
+                    sb.Append(new string(' ', depth * 4));
+                    string declaration = fallback.Value switch
+                    {
+                        FallbackResourceKind.Texture => "Texture2D<float4>",
+                        FallbackResourceKind.Structured => "StructuredBuffer<float4>",
+                        _ => "ByteAddressBuffer",
+                    };
+                    string kindComment = fallback.Value switch
+                    {
+                        FallbackResourceKind.Texture => "texture",
+                        FallbackResourceKind.Structured => "structured",
+                        _ => "raw",
+                    };
+                    sb.AppendLine($"{declaration} {name}; // unresolved {kindComment} fallback t{fallback.Key}");
+                    declaredNames.Add(name);
+                }
+            }
+
+            foreach (int samplerRegister in unresolvedSamplerRegisters.OrderBy(i => i))
+            {
+                string name = $"{USILOperand.GetTypeShortForm(USILOperandType.SamplerRegister)}{samplerRegister}";
+                if (!declaredNames.Contains(name))
+                {
+                    sb.Append(new string(' ', depth * 4));
+                    sb.AppendLine($"sampler2D {name}; // unresolved sampler fallback s{samplerRegister}");
+                    declaredNames.Add(name);
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private enum FallbackResourceKind
+        {
+            Texture,
+            Structured,
+            Raw,
+        }
+
+        private static void CollectFallbackDeclarationHints(
+            UShaderProgram shaderProgram,
+            Dictionary<int, FallbackResourceKind> resourceKinds,
+            HashSet<int> unresolvedSamplerRegisters)
+        {
+            foreach (USILInstruction instruction in shaderProgram.instructions)
+            {
+                CollectFallbackOperandHints(instruction, resourceKinds, unresolvedSamplerRegisters);
+            }
+        }
+
+        private static void MergeFallbackDeclarationHints(
+            string keywordSet,
+            Dictionary<int, FallbackResourceKind> incomingResourceKinds,
+            HashSet<int> incomingSamplerRegisters,
+            Dictionary<string, Dictionary<int, FallbackResourceKind>> fallbackResourcesByKeywordSet,
+            Dictionary<string, HashSet<int>> fallbackSamplersByKeywordSet)
+        {
+            if (!fallbackResourcesByKeywordSet.TryGetValue(keywordSet, out Dictionary<int, FallbackResourceKind>? mergedKinds))
+            {
+                mergedKinds = new Dictionary<int, FallbackResourceKind>();
+                fallbackResourcesByKeywordSet.Add(keywordSet, mergedKinds);
+            }
+
+            foreach (KeyValuePair<int, FallbackResourceKind> incoming in incomingResourceKinds)
+            {
+                if (mergedKinds.TryGetValue(incoming.Key, out FallbackResourceKind existingKind))
+                {
+                    mergedKinds[incoming.Key] = MergeFallbackResourceKinds(existingKind, incoming.Value);
+                }
+                else
+                {
+                    mergedKinds.Add(incoming.Key, incoming.Value);
+                }
+            }
+
+            if (!fallbackSamplersByKeywordSet.TryGetValue(keywordSet, out HashSet<int>? mergedSamplers))
+            {
+                mergedSamplers = new HashSet<int>();
+                fallbackSamplersByKeywordSet.Add(keywordSet, mergedSamplers);
+            }
+
+            mergedSamplers.UnionWith(incomingSamplerRegisters);
+        }
+
+        private static void CollectFallbackOperandHints(
+            USILInstruction instruction,
+            Dictionary<int, FallbackResourceKind> resourceKinds,
+            HashSet<int> unresolvedSamplerRegisters)
+        {
+            if (instruction.destOperand is not null)
+            {
+                CollectFallbackOperandHints(
+                    instruction.destOperand,
+                    instruction.instructionType,
+                    resourceKinds,
+                    unresolvedSamplerRegisters);
+            }
+
+            foreach (USILOperand srcOperand in instruction.srcOperands)
+            {
+                CollectFallbackOperandHints(
+                    srcOperand,
+                    instruction.instructionType,
+                    resourceKinds,
+                    unresolvedSamplerRegisters);
+            }
+        }
+
+        private static void CollectFallbackOperandHints(
+            USILOperand operand,
+            USILInstructionType instructionType,
+            Dictionary<int, FallbackResourceKind> resourceKinds,
+            HashSet<int> unresolvedSamplerRegisters)
+        {
+            if (operand.operandType == USILOperandType.ResourceRegister && !operand.metadataNameAssigned)
+            {
+                FallbackResourceKind inferredKind = InferFallbackResourceKind(instructionType);
+                if (resourceKinds.TryGetValue(operand.registerIndex, out FallbackResourceKind existingKind))
+                {
+                    resourceKinds[operand.registerIndex] = MergeFallbackResourceKinds(existingKind, inferredKind);
+                }
+                else
+                {
+                    resourceKinds.Add(operand.registerIndex, inferredKind);
+                }
+            }
+            else if (operand.operandType == USILOperandType.SamplerRegister && !operand.metadataNameAssigned)
+            {
+                unresolvedSamplerRegisters.Add(operand.registerIndex);
+            }
+
+            if (operand.arrayRelative is not null)
+            {
+                CollectFallbackOperandHints(
+                    operand.arrayRelative,
+                    instructionType,
+                    resourceKinds,
+                    unresolvedSamplerRegisters);
+            }
+
+            foreach (USILOperand child in operand.children)
+            {
+                CollectFallbackOperandHints(
+                    child,
+                    instructionType,
+                    resourceKinds,
+                    unresolvedSamplerRegisters);
+            }
+        }
+
+        private static FallbackResourceKind InferFallbackResourceKind(USILInstructionType instructionType)
+        {
+            return instructionType switch
+            {
+                USILInstructionType.ResourceDimensionInfo or
+                USILInstructionType.GetDimensions => FallbackResourceKind.Texture,
+                USILInstructionType.LoadResourceStructured => FallbackResourceKind.Structured,
+                _ => FallbackResourceKind.Raw,
+            };
+        }
+
+        private static FallbackResourceKind MergeFallbackResourceKinds(
+            FallbackResourceKind existingKind,
+            FallbackResourceKind incomingKind)
+        {
+            if (existingKind == incomingKind)
+            {
+                return existingKind;
+            }
+
+            if (existingKind == FallbackResourceKind.Raw || incomingKind == FallbackResourceKind.Raw)
+            {
+                return FallbackResourceKind.Raw;
+            }
+
+            if (existingKind == FallbackResourceKind.Structured || incomingKind == FallbackResourceKind.Structured)
+            {
+                return FallbackResourceKind.Structured;
+            }
+
+            return FallbackResourceKind.Texture;
+        }
+
         private void WriteProperties(AssetTypeValueField propInfo)
         {
             _sb.AppendLine("Properties {");
@@ -525,6 +705,7 @@ namespace USCSandbox.Processor
         private void WriteSubShaders(BlobManager blobManager, AssetTypeValueField parsedForm)
         {
             var subshaders = parsedForm["m_SubShaders.Array"];
+            Logger.Info($"SubShader count: {subshaders.Children.Count}");
             foreach (var subshader in subshaders)
             {
                 _sb.AppendLine("SubShader {");
@@ -561,12 +742,14 @@ namespace USCSandbox.Processor
         private void WritePasses(BlobManager blobManager, AssetTypeValueField subshader)
         {
             var passes = subshader["m_Passes.Array"];
+            Logger.Debug($"Pass count in subshader: {passes.Children.Count}");
             foreach (var pass in passes)
             {
                 var usePassName = pass["m_UseName"].AsString;
                 if (!string.IsNullOrEmpty(usePassName))
                 {
                     _sb.AppendLine($"UsePass \"{usePassName}\"");
+                    Logger.Debug($"UsePass emitted: {usePassName}");
                     continue;
                 }
                 
@@ -574,6 +757,7 @@ namespace USCSandbox.Processor
                 _sb.Indent();
                 {
                     var passName = pass["m_State"]["m_Name"].AsString;
+                    Logger.Info($"Processing pass: {passName}");
                     
                     WritePassState(pass["m_State"]);
 
@@ -583,20 +767,11 @@ namespace USCSandbox.Processor
                     var vertInfo = new SerializedProgramInfo(pass["progVertex"], nameTable);
                     var fragInfo = new SerializedProgramInfo(pass["progFragment"], nameTable);
 
-                    var vertProgInfos = vertInfo.GetForPlatform((int)GetVertexProgramForPlatform(_platformId));
-                    var fragProgInfos = fragInfo.GetForPlatform((int)GetFragmentProgramForPlatform(_platformId));
-                    
                     List<ShaderProgramBasket> baskets =[];
-                    for (var i = 0; i < vertProgInfos.Count; i++)
-                    {
-                        baskets.Add(new ShaderProgramBasket(vertInfo, vertProgInfos[i],
-                            vertInfo.ParameterBlobIndices.Count > 0 ? (int)vertInfo.ParameterBlobIndices[i] : -1));
-                    }
-                    for (var i = 0; i < fragProgInfos.Count; i++)
-                    {
-                        baskets.Add(new ShaderProgramBasket(fragInfo, fragProgInfos[i],
-                            fragInfo.ParameterBlobIndices.Count > 0 ? (int)fragInfo.ParameterBlobIndices[i] : -1));
-                    }
+                    AddMatchingBaskets(vertInfo, baskets);
+                    AddMatchingBaskets(fragInfo, baskets);
+                    Logger.Debug($"Pass '{passName}' matched program baskets: {baskets.Count}");
+
                     if (baskets.Count > 0)
                         WritePassBody(blobManager, baskets, _sb.GetIndent(), passName);
                 }
@@ -867,22 +1042,49 @@ namespace USCSandbox.Processor
             }
         }
 
-        private ShaderGpuProgramType GetVertexProgramForPlatform(GPUPlatform gpuPlatform)
+        private void AddMatchingBaskets(SerializedProgramInfo programInfo, List<ShaderProgramBasket> baskets)
         {
-            return gpuPlatform switch
+            int added = 0;
+            for (int i = 0; i < programInfo.SubProgramInfos.Count; i++)
             {
-                GPUPlatform.d3d11 => ShaderGpuProgramType.DX11VertexSM40,
-                GPUPlatform.Switch => ShaderGpuProgramType.Console,
-            };
+                SerializedSubProgramInfo subProgramInfo = programInfo.SubProgramInfos[i];
+                ShaderGpuProgramType type = ConvertSerializedType(subProgramInfo.GpuProgramType);
+                if (type.ToGPUPlatform() == _platformId || (_platformId == GPUPlatform.d3d11 && type.IsDirectX()))
+                {
+                    int parameterBlobIndex = programInfo.ParameterBlobIndices.Count > i
+                        ? (int)programInfo.ParameterBlobIndices[i]
+                        : -1;
+                    baskets.Add(new ShaderProgramBasket(programInfo, subProgramInfo, parameterBlobIndex));
+                    added++;
+                }
+            }
+            Logger.Debug($"AddMatchingBaskets: scanned={programInfo.SubProgramInfos.Count}, added={added}, platform={_platformId}");
         }
 
-        private ShaderGpuProgramType GetFragmentProgramForPlatform(GPUPlatform gpuPlatform)
+        private ShaderGpuProgramType ConvertSerializedType(int rawType)
         {
-            return gpuPlatform switch
+            if (_engVer.IsGreaterEqual(5, 5))
             {
-                GPUPlatform.d3d11 => ShaderGpuProgramType.DX11PixelSM40,
-                GPUPlatform.Switch => ShaderGpuProgramType.Console,
-            };
+                return ((ShaderGpuProgramType55)rawType).ToGpuProgramType();
+            }
+            else
+            {
+                return ((ShaderGpuProgramType53)rawType).ToGpuProgramType();
+            }
+        }
+
+        private static bool IsVertexProgramType(ShaderGpuProgramType type)
+        {
+            return type == ShaderGpuProgramType.ConsoleVS
+                || type.ToString().Contains("Vertex", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFragmentProgramType(ShaderGpuProgramType type)
+        {
+            string name = type.ToString();
+            return type == ShaderGpuProgramType.ConsoleFS
+                || name.Contains("Pixel", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("Fragment", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

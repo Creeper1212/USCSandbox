@@ -1,0 +1,127 @@
+USCSandbox Decompiler Improvement Plan
+Date: 2026-03-05
+
+Goal
+- Maximize behavior fidelity and compile reliability of generated Unity shaders.
+- Minimize data loss and unresolved metadata.
+
+Latest run status (2026-03-05, Gorilla Tag sharedassets0.assets, Unity 2022.3.2f1)
+- Command:
+  `USCSandbox.exe null "D:\Steam\steamapps\content\app_1533390\depot_1533391\Gorilla Tag_Data\sharedassets0.assets" 0 --all --version 2022.3.2f1`
+- Build/publish: success (`win-x64`)
+- Runtime exceptions in session log: 0
+- Unsupported instruction comments in output: 0
+- Remaining unresolved fallback resources (`rscN`): 256
+- Variant null-param crashes: 0
+
+Newest verification cycle (2026-03-05, after structured-load emission cleanup)
+- Clean/build commands:
+  - `dotnet clean USCSandbox/USCSandbox.csproj -c Release`
+  - `dotnet build USCSandbox/USCSandbox.csproj -c Release`
+- Decompile command:
+  - `USCSandbox.exe null "D:\Steam\steamapps\content\app_1533390\depot_1533391\Gorilla Tag_Data\sharedassets0.assets" 0 --all --version 2022.3.2f1`
+- Output/log root:
+  - `USCSandbox/USCSandbox/bin/Release/net8.0/out`
+  - `USCSandbox/USCSandbox/bin/Release/net8.0/logs/session-20260305-162733.log`
+- Measured results:
+  - shader files generated: 28
+  - shader logs generated: 28
+  - session errors: 0
+  - session exception-like lines: 0
+  - unsupported instruction comments: 0
+  - unresolved `texND*` calls: 0
+  - unresolved fallback declarations: 528
+  - invalid structured-load cast pattern (`((float4[1])...Load(...))`): 0
+  - undeclared `rscN` references: 0
+  - undeclared `smpN` references: 0
+
+Progress update (2026-03-05, post-baseline patch set)
+- Added opcode-based unresolved fallback declaration inference in shader emission.
+- Added unresolved sampler fallback declarations (`sampler2D smpN`) to prevent missing-symbol output.
+- Added keyword-set merged fallback typing so shared keyword variants use a consistent fallback type per register.
+- Replaced unresolved `texND*` fallback calls with compile-safe `tex2D*` fallback calls.
+- Removed non-compilable structured load emission pattern by emitting direct `.Load(...)` plus swizzle extraction.
+- Spot-validated on Gorilla Tag shaders:
+  - `Unlit/Texture` (path id `2104`)
+  - `GorillaTag/SnapPieceIndirect` (path id `2123`)
+
+Validation status
+- Full `--all` corpus re-run completed on 2026-03-05 after structured-load emitter changes.
+- Current active gap is fallback declaration volume/quality reduction (count is still 528), not missing declarations or unsupported opcodes.
+
+Phase 1 - Measurement and Regression Harness (In Progress)
+1) Keep Gorilla Tag corpus as baseline.
+2) Record each run metrics:
+   - exception count
+   - unsupported op count
+   - unresolved resource/sampler count
+   - output file count and size
+3) Persist run notes in `BUILD_FIXES.md`.
+
+Exit criteria:
+- Every iteration has comparable before/after metrics.
+
+Phase 2 - Opcode Coverage (Completed for current corpus)
+1) Added support for:
+   - `bfi`
+   - `ubfe` / `ibfe`
+   - `ld_raw`
+2) Added HLSL emission for those instructions.
+3) Revalidated against baseline corpus.
+
+Exit criteria:
+- `// Unsupported instruction` reaches zero on baseline corpus.
+
+Phase 3 - Resource and Sampler Fidelity (Active Priority)
+1) Improve fallback declaration typing:
+   - classify unresolved resources as texture/structured/raw
+   - emit matching declaration types instead of generic fallback
+2) Add unresolved sampler fallback declarations (`smpN`) to avoid missing symbol output.
+3) Tighten metadata assignment for resource registers and stage handling.
+
+Exit criteria:
+- No unresolved `rscN`/`smpN` symbol usage without a valid declaration.
+- Generated code compiles in significantly more shaders.
+
+Phase 4 - Structured Load and HLSL Cleanliness (Completed for current corpus)
+1) Replace invalid structured-load array-cast patterns with clean `.Load(...)` access and swizzle extraction.
+2) Normalize integer/float cast output where mixed-type ops require `asuint/asfloat`.
+3) Keep strict invariant float formatting and semicolon correctness.
+
+Exit criteria:
+- Remove non-compilable load/cast patterns from generated code.
+
+Phase 5 - Variant Deduplication and Size Reduction
+1) Detect duplicate function bodies across keyword variants.
+2) Reuse shared code blocks while keeping `#if` guards.
+3) Reduce huge shaders (`UberShader*`) without changing behavior.
+
+Exit criteria:
+- Material size drop and equal behavior for tested shaders.
+
+Phase 6 - Validation Gate
+1) Add optional compile-validation pass (DXC/FXC script).
+2) Track compile success by shader file.
+3) Block regressions before release.
+
+Exit criteria:
+- Stable trend of higher compile success and lower unresolved symbols.
+
+----------------------------------------
+Handling one `.shader` with multiple include files
+
+What Unity data gives us
+- Compiled bytecode + metadata, not original source include boundaries.
+
+What we can reconstruct
+1) A behavior-equivalent single-file shader (primary output).
+2) Optional reconstructed include mode:
+   - extract repeated helper blocks into generated `.cginc`/`.hlsl`
+   - emit generated `#include` lines
+   - add provenance comments for reconstructed chunks.
+
+What cannot be guaranteed
+- Original include filenames, split points, comments, and formatting.
+
+Practical target
+- Behavior fidelity first, then clean modular source output.
