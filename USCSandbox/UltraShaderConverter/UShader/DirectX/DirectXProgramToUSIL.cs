@@ -1,7 +1,9 @@
-﻿using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.DirectXDisassembler;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.DirectXDisassembler;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.DirectXDisassembler.Blocks;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Function;
 using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL;
+using System;
+using System.Collections.Generic;
 using System.Text;
 
 namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX
@@ -28,97 +30,97 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             shader = new UShaderProgram();
 
-            _instructionHandlers = new()
+            _instructionHandlers = new Dictionary<Opcode, InstHandler>()
             {
-                { Opcode.mov, new InstHandler(HandleMov) },
-                { Opcode.movc, new InstHandler(HandleMovc) },
-                { Opcode.add, new InstHandler(HandleAdd) },
-                { Opcode.iadd, new InstHandler(HandleAdd) },
-                { Opcode.mul, new InstHandler(HandleMul) },
-                { Opcode.imul, new InstHandler(HandleIMul) },
-                { Opcode.umul, new InstHandler(HandleIMul) },
-                { Opcode.div, new InstHandler(HandleDiv) },
-                { Opcode.udiv, new InstHandler(HandleDiv) },
-                { Opcode.mad, new InstHandler(HandleMad) },
-                { Opcode.imad, new InstHandler(HandleMad) },
-                { Opcode.and, new InstHandler(HandleAnd) },
-                { Opcode.or, new InstHandler(HandleOr) },
-                { Opcode.xor, new InstHandler(HandleXor) },
-                { Opcode.not, new InstHandler(HandleNot) },
-                { Opcode.ftoi, new InstHandler(HandleFtoi) },
-                { Opcode.ftou, new InstHandler(HandleFtoi) },
-                { Opcode.itof, new InstHandler(HandleItof) },
-                { Opcode.utof, new InstHandler(HandleItof) },
-                { Opcode.min, new InstHandler(HandleMin) },
-                { Opcode.imin, new InstHandler(HandleMin) },
-                { Opcode.umin, new InstHandler(HandleMin) },
-                { Opcode.max, new InstHandler(HandleMax) },
-                { Opcode.imax, new InstHandler(HandleMax) },
-                { Opcode.umax, new InstHandler(HandleMax) },
-                { Opcode.sqrt, new InstHandler(HandleSqrt) },
-                { Opcode.rsq, new InstHandler(HandleRsq) },
-                { Opcode.log, new InstHandler(HandleLog) },
-                { Opcode.exp, new InstHandler(HandleExp) },
-                { Opcode.rcp, new InstHandler(HandleRcp) },
-                { Opcode.frc, new InstHandler(HandleFrc) },
-                { Opcode.ineg, new InstHandler(HandleIneg) },
-                { Opcode.round_ni, new InstHandler(HandleRoundNi) },
-                { Opcode.round_pi, new InstHandler(HandleRoundPi) },
-                { Opcode.round_ne, new InstHandler(HandleRoundNe) },
-                { Opcode.round_z, new InstHandler(HandleRoundZ) },
-                { Opcode.sincos, new InstHandler(HandleSincos) },
-                { Opcode.ishl, new InstHandler(HandleIShl) },
-                { Opcode.ishr, new InstHandler(HandleIShr) },
-                { Opcode.ushr, new InstHandler(HandleIShr) },
-                { Opcode.dp2, new InstHandler(HandleDp2) },
-                { Opcode.dp3, new InstHandler(HandleDp3) },
-                { Opcode.dp4, new InstHandler(HandleDp4) },
-                { Opcode.sample, new InstHandler(HandleSample) },
-                { Opcode.sample_c, new InstHandler(HandleSampleC) },
-                { Opcode.sample_c_lz, new InstHandler(HandleSampleC) },
-                { Opcode.sample_l, new InstHandler(HandleSampleL) },
-                { Opcode.sample_b, new InstHandler(HandleSampleL) },
-                { Opcode.sample_d, new InstHandler(HandleSampleD) },
-                { Opcode.ld, new InstHandler(HandleLd) },
-                { Opcode.ldms, new InstHandler(HandleLd) },
-                { Opcode.ld_structured, new InstHandler(HandleLdStructured) },
-                { Opcode.discard, new InstHandler(HandleDiscard) },
-                { Opcode.resinfo, new InstHandler(HandleResInfo) },
-                { Opcode.sampleinfo, new InstHandler(HandleSampleInfo) },
-                { Opcode.deriv_rtx, new InstHandler(HandleDerivRt) },
-                { Opcode.deriv_rty, new InstHandler(HandleDerivRt) },
-                { Opcode.deriv_rtx_coarse, new InstHandler(HandleDerivRt) },
-                { Opcode.deriv_rty_coarse, new InstHandler(HandleDerivRt) },
-                { Opcode.deriv_rtx_fine, new InstHandler(HandleDerivRt) },
-                { Opcode.deriv_rty_fine, new InstHandler(HandleDerivRt) },
-                { Opcode.@if, new InstHandler(HandleIf) },
-                { Opcode.@else, new InstHandler(HandleElse) },
-                { Opcode.endif, new InstHandler(HandleEndIf) },
-                { Opcode.loop, new InstHandler(HandleLoop) },
-                { Opcode.endloop, new InstHandler(HandleEndLoop) },
-                { Opcode.@break, new InstHandler(HandleBreak) },
-                { Opcode.breakc, new InstHandler(HandleBreakc) },
-                { Opcode.@continue, new InstHandler(HandleContinue) },
-                { Opcode.continuec, new InstHandler(HandleContinuec) },
-                { Opcode.@switch, new InstHandler(HandleSwitch) },
-                { Opcode.@case, new InstHandler(HandleCase) },
-                { Opcode.@default, new InstHandler(HandleDefault) },
-                { Opcode.endswitch, new InstHandler(HandleEndSwitch) },
-                { Opcode.eq, new InstHandler(HandleEq) },
-                { Opcode.ieq, new InstHandler(HandleEq) },
-                { Opcode.ne, new InstHandler(HandleNeq) },
-                { Opcode.ine, new InstHandler(HandleNeq) },
-                { Opcode.lt, new InstHandler(HandleLt) },
-                { Opcode.ilt, new InstHandler(HandleLt) },
-                { Opcode.ult, new InstHandler(HandleLt) },
-                { Opcode.ge, new InstHandler(HandleGe) },
-                { Opcode.ige, new InstHandler(HandleGe) },
-                { Opcode.uge, new InstHandler(HandleGe) },
-                { Opcode.ret, new InstHandler(HandleRet) },
+                { Opcode.mov, HandleMov },
+                { Opcode.movc, HandleMovc },
+                { Opcode.add, HandleAdd },
+                { Opcode.iadd, HandleAdd },
+                { Opcode.mul, HandleMul },
+                { Opcode.imul, HandleIMul },
+                { Opcode.umul, HandleIMul },
+                { Opcode.div, HandleDiv },
+                { Opcode.udiv, HandleDiv },
+                { Opcode.mad, HandleMad },
+                { Opcode.imad, HandleMad },
+                { Opcode.and, HandleAnd },
+                { Opcode.or, HandleOr },
+                { Opcode.xor, HandleXor },
+                { Opcode.not, HandleNot },
+                { Opcode.ftoi, HandleFtoi },
+                { Opcode.ftou, HandleFtoi },
+                { Opcode.itof, HandleItof },
+                { Opcode.utof, HandleItof },
+                { Opcode.min, HandleMin },
+                { Opcode.imin, HandleMin },
+                { Opcode.umin, HandleMin },
+                { Opcode.max, HandleMax },
+                { Opcode.imax, HandleMax },
+                { Opcode.umax, HandleMax },
+                { Opcode.sqrt, HandleSqrt },
+                { Opcode.rsq, HandleRsq },
+                { Opcode.log, HandleLog },
+                { Opcode.exp, HandleExp },
+                { Opcode.rcp, HandleRcp },
+                { Opcode.frc, HandleFrc },
+                { Opcode.ineg, HandleIneg },
+                { Opcode.round_ni, HandleRoundNi },
+                { Opcode.round_pi, HandleRoundPi },
+                { Opcode.round_ne, HandleRoundNe },
+                { Opcode.round_z, HandleRoundZ },
+                { Opcode.sincos, HandleSincos },
+                { Opcode.ishl, HandleIShl },
+                { Opcode.ishr, HandleIShr },
+                { Opcode.ushr, HandleIShr },
+                { Opcode.dp2, HandleDp2 },
+                { Opcode.dp3, HandleDp3 },
+                { Opcode.dp4, HandleDp4 },
+                { Opcode.sample, HandleSample },
+                { Opcode.sample_c, HandleSampleC },
+                { Opcode.sample_c_lz, HandleSampleC },
+                { Opcode.sample_l, HandleSampleL },
+                { Opcode.sample_b, HandleSampleL },
+                { Opcode.sample_d, HandleSampleD },
+                { Opcode.ld, HandleLd },
+                { Opcode.ldms, HandleLd },
+                { Opcode.ld_structured, HandleLdStructured },
+                { Opcode.discard, HandleDiscard },
+                { Opcode.resinfo, HandleResInfo },
+                { Opcode.sampleinfo, HandleSampleInfo },
+                { Opcode.deriv_rtx, HandleDerivRt },
+                { Opcode.deriv_rty, HandleDerivRt },
+                { Opcode.deriv_rtx_coarse, HandleDerivRt },
+                { Opcode.deriv_rty_coarse, HandleDerivRt },
+                { Opcode.deriv_rtx_fine, HandleDerivRt },
+                { Opcode.deriv_rty_fine, HandleDerivRt },
+                { Opcode.@if, HandleIf },
+                { Opcode.@else, HandleElse },
+                { Opcode.endif, HandleEndIf },
+                { Opcode.loop, HandleLoop },
+                { Opcode.endloop, HandleEndLoop },
+                { Opcode.@break, HandleBreak },
+                { Opcode.breakc, HandleBreakc },
+                { Opcode.@continue, HandleContinue },
+                { Opcode.continuec, HandleContinuec },
+                { Opcode.@switch, HandleSwitch },
+                { Opcode.@case, HandleCase },
+                { Opcode.@default, HandleDefault },
+                { Opcode.endswitch, HandleEndSwitch },
+                { Opcode.eq, HandleEq },
+                { Opcode.ieq, HandleEq },
+                { Opcode.ne, HandleNeq },
+                { Opcode.ine, HandleNeq },
+                { Opcode.lt, HandleLt },
+                { Opcode.ilt, HandleLt },
+                { Opcode.ult, HandleLt },
+                { Opcode.ge, HandleGe },
+                { Opcode.ige, HandleGe },
+                { Opcode.uge, HandleGe },
+                { Opcode.ret, HandleRet },
                 ////dec
-                { Opcode.dcl_temps, new InstHandler(HandleTemps) },
-                { Opcode.dcl_resource, new InstHandler(HandleResource) },
-                { Opcode.customdata, new InstHandler(HandleCustomData) }
+                { Opcode.dcl_temps, HandleTemps },
+                { Opcode.dcl_resource, HandleResource },
+                { Opcode.customdata, HandleCustomData }
             };
 
             _resourceToDimension = new Dictionary<int, ResourceDimension>();
@@ -263,27 +265,38 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             switch (dxOperand.operand)
             {
                 case Operand.Null:
-                {
-                    usilOperand.operandType = USILOperandType.Null;
-                    break;
-                }
-                case Operand.ConstantBuffer:
-                {
-                    // figure out cb names in a later pass
-                    if (dxOperand.subOperands[1] != null)
                     {
-                        // todo combine cb and icb
-                        int cbSlotIdx = dxOperand.arraySizes[0];
-                        int cbOff = dxOperand.registerNumber;
-                        SHDRInstructionOperand cbOperand = dxOperand.subOperands[1];
-
-                        usilOperand.operandType = USILOperandType.ConstantBuffer;
-                        usilOperand.registerIndex = cbSlotIdx;
-                        usilOperand.arrayRelative = new USILOperand();
-                        FillUSILOperand(cbOperand, usilOperand.arrayRelative, cbOperand.swizzle, false);
-                        usilOperand.arrayIndex = cbOff;
+                        usilOperand.operandType = USILOperandType.Null;
+                        break;
                     }
-                    else
+                case Operand.ConstantBuffer:
+                    {
+                        // figure out cb names in a later pass
+                        if (dxOperand.subOperands[1] != null)
+                        {
+                            // todo combine cb and icb
+                            int cbSlotIdx = dxOperand.arraySizes[0];
+                            int cbOff = dxOperand.registerNumber;
+                            SHDRInstructionOperand cbOperand = dxOperand.subOperands[1];
+
+                            usilOperand.operandType = USILOperandType.ConstantBuffer;
+                            usilOperand.registerIndex = cbSlotIdx;
+                            usilOperand.arrayRelative = new USILOperand();
+                            FillUSILOperand(cbOperand, usilOperand.arrayRelative, cbOperand.swizzle, false);
+                            usilOperand.arrayIndex = cbOff;
+                        }
+                        else
+                        {
+                            int cbSlotIdx = dxOperand.arraySizes[0];
+                            int cbArrIdx = dxOperand.arraySizes[1];
+
+                            usilOperand.operandType = USILOperandType.ConstantBuffer;
+                            usilOperand.registerIndex = cbSlotIdx;
+                            usilOperand.arrayIndex = cbArrIdx;
+                        }
+                        break;
+                    }
+                case Operand.IndexableTemp:
                     {
                         int cbSlotIdx = dxOperand.arraySizes[0];
                         int cbArrIdx = dxOperand.arraySizes[1];
@@ -291,67 +304,56 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                         usilOperand.operandType = USILOperandType.ConstantBuffer;
                         usilOperand.registerIndex = cbSlotIdx;
                         usilOperand.arrayIndex = cbArrIdx;
+                        break;
                     }
-                    break;
-                }
-                case Operand.IndexableTemp:
-                {
-                    int cbSlotIdx = dxOperand.arraySizes[0];
-                    int cbArrIdx = dxOperand.arraySizes[1];
-
-                    usilOperand.operandType = USILOperandType.ConstantBuffer;
-                    usilOperand.registerIndex = cbSlotIdx;
-                    usilOperand.arrayIndex = cbArrIdx;
-                    break;
-                }
                 case Operand.Input:
-                {
-                    int inRegIdx = dxOperand.arraySizes[0];
+                    {
+                        int inRegIdx = dxOperand.arraySizes[0];
 
-                    usilOperand.operandType = USILOperandType.InputRegister;
-                    usilOperand.registerIndex = inRegIdx;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.InputRegister;
+                        usilOperand.registerIndex = inRegIdx;
+                        break;
+                    }
                 case Operand.Output:
-                {
-                    int outRegIdx = dxOperand.arraySizes[0];
+                    {
+                        int outRegIdx = dxOperand.arraySizes[0];
 
-                    usilOperand.operandType = USILOperandType.OutputRegister;
-                    usilOperand.registerIndex = outRegIdx;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.OutputRegister;
+                        usilOperand.registerIndex = outRegIdx;
+                        break;
+                    }
                 case Operand.Temp:
-                {
-                    int tmpRegIdx;
-                    if (dxOperand.arraySizes.Length > 0)
                     {
-                        tmpRegIdx = dxOperand.arraySizes[0];
-                    }
-                    else
-                    {
-                        tmpRegIdx = 0;
-                    }
+                        int tmpRegIdx;
+                        if (dxOperand.arraySizes.Length > 0)
+                        {
+                            tmpRegIdx = dxOperand.arraySizes[0];
+                        }
+                        else
+                        {
+                            tmpRegIdx = 0;
+                        }
 
-                    usilOperand.operandType = USILOperandType.TempRegister;
-                    usilOperand.registerIndex = tmpRegIdx;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.TempRegister;
+                        usilOperand.registerIndex = tmpRegIdx;
+                        break;
+                    }
                 case Operand.Resource:
-                {
-                    int rscRegIdx = dxOperand.arraySizes[0];
+                    {
+                        int rscRegIdx = dxOperand.arraySizes[0];
 
-                    usilOperand.operandType = USILOperandType.ResourceRegister;
-                    usilOperand.registerIndex = rscRegIdx;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.ResourceRegister;
+                        usilOperand.registerIndex = rscRegIdx;
+                        break;
+                    }
                 case Operand.Sampler:
-                {
-                    int smpRegIdx = dxOperand.arraySizes[0];
+                    {
+                        int smpRegIdx = dxOperand.arraySizes[0];
 
-                    usilOperand.operandType = USILOperandType.SamplerRegister;
-                    usilOperand.registerIndex = smpRegIdx;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.SamplerRegister;
+                        usilOperand.registerIndex = smpRegIdx;
+                        break;
+                    }
 
                 case Operand.InputCoverageMask:
                     usilOperand.operandType = USILOperandType.InputCoverageMask;
@@ -400,96 +402,96 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                     break;
 
                 case Operand.Immediate32:
-                {
-                    usilOperand.operandType = immIsInt ? USILOperandType.ImmediateInt : USILOperandType.ImmediateFloat;
-
-                    if (dxOperand.immValues.Length == 1)
                     {
-                        if (immIsInt)
+                        usilOperand.operandType = immIsInt ? USILOperandType.ImmediateInt : USILOperandType.ImmediateFloat;
+
+                        if (dxOperand.immValues.Length == 1)
                         {
-                            usilOperand.immValueInt = new int[1]
+                            if (immIsInt)
                             {
+                                usilOperand.immValueInt = new int[1]
+                                {
                                 ConvertFloatToInt((float)dxOperand.immValues[0])
-                            };
-                        }
-                        else if (double.IsNaN(dxOperand.immValues[0]) 
-                                 || Math.Abs(((BitConverter.DoubleToInt64Bits(dxOperand.immValues[0]) >> 52) & 0x7ff) - 1023)
-                                     is > 100 and < 1023)
-                        {
-                            usilOperand.immValueFloat = new float[1]
+                                };
+                            }
+                            else if (double.IsNaN(dxOperand.immValues[0])
+                                     || Math.Abs(((BitConverter.DoubleToInt64Bits(dxOperand.immValues[0]) >> 52) & 0x7ff) - 1023)
+                                         is > 100 and < 1023)
                             {
+                                usilOperand.immValueFloat = new float[1]
+                                {
                                 ConvertFloatToInt((float)dxOperand.immValues[0])
-                            };
-                        }
-                        else
-                        {
-                            usilOperand.immValueFloat = new float[1]
+                                };
+                            }
+                            else
                             {
+                                usilOperand.immValueFloat = new float[1]
+                                {
                                 (float)dxOperand.immValues[0]
-                            };
-                        }
-                    }
-                    else if (dxOperand.immValues.Length == 4)
-                    {
-                        if (immIsInt)
-                        {
-                            usilOperand.immValueInt = new int[mask.Length];
-                            for (int i = 0; i < mask.Length; i++)
-                            {
-                                usilOperand.immValueInt[i] = ConvertFloatToInt((float)dxOperand.immValues[mask[i]]);
+                                };
                             }
                         }
-                        else if (dxOperand.immValues
-                                 .Any(x => double.IsNaN(x) 
-                                           || Math.Abs(((BitConverter.DoubleToInt64Bits(x) >> 52) & 0x7ff) - 1023)
-                                               is > 100 and < 1023))
+                        else if (dxOperand.immValues.Length == 4)
                         {
-                            usilOperand.immValueFloat = new float[mask.Length];
-                            for (int i = 0; i < mask.Length; i++)
+                            if (immIsInt)
                             {
-                                usilOperand.immValueFloat[i] = ConvertFloatToInt((float)dxOperand.immValues[mask[i]]);
+                                usilOperand.immValueInt = new int[mask.Length];
+                                for (int i = 0; i < mask.Length; i++)
+                                {
+                                    usilOperand.immValueInt[i] = ConvertFloatToInt((float)dxOperand.immValues[mask[i]]);
+                                }
                             }
-                        }
-                        else if (mask.Length > 0)
-                        {
-                            usilOperand.immValueFloat = new float[mask.Length];
-                            for (int i = 0; i < mask.Length; i++)
+                            else if (dxOperand.immValues
+                                     .Any(x => double.IsNaN(x)
+                                               || Math.Abs(((BitConverter.DoubleToInt64Bits(x) >> 52) & 0x7ff) - 1023)
+                                                   is > 100 and < 1023))
                             {
-                                usilOperand.immValueFloat[i] = (float)dxOperand.immValues[mask[i]];
+                                usilOperand.immValueFloat = new float[mask.Length];
+                                for (int i = 0; i < mask.Length; i++)
+                                {
+                                    usilOperand.immValueFloat[i] = ConvertFloatToInt((float)dxOperand.immValues[mask[i]]);
+                                }
+                            }
+                            else if (mask.Length > 0)
+                            {
+                                usilOperand.immValueFloat = new float[mask.Length];
+                                for (int i = 0; i < mask.Length; i++)
+                                {
+                                    usilOperand.immValueFloat[i] = (float)dxOperand.immValues[mask[i]];
+                                }
+                            }
+                            else
+                            {
+                                usilOperand.immValueFloat = new float[dxOperand.immValues.Length];
+                                for (int i = 0; i < dxOperand.immValues.Length; i++)
+                                {
+                                    usilOperand.immValueFloat[i] = (float)dxOperand.immValues[i];
+                                }
                             }
                         }
                         else
                         {
-                            usilOperand.immValueFloat = new float[dxOperand.immValues.Length];
-                            for (int i = 0; i < dxOperand.immValues.Length; i++)
-                            {
-                                usilOperand.immValueFloat[i] = (float)dxOperand.immValues[i];
-                            }
+                            throw new Exception($"{dxOperand.immValues.Length} imm values not possible");
                         }
+                        break;
                     }
-                    else
-                    {
-                        throw new Exception($"{dxOperand.immValues.Length} imm values not possible");
-                    }
-                    break;
-                }
                 case Operand.ImmediateConstantBuffer:
-                {
-                    int icbSlotIdx = dxOperand.arraySizes[0];
-                    int icbOff = dxOperand.registerNumber;
-                    SHDRInstructionOperand icbOperand = dxOperand.subOperands[0];
+                    {
+                        int icbSlotIdx = dxOperand.arraySizes[0];
+                        int icbOff = dxOperand.registerNumber;
+                        SHDRInstructionOperand icbOperand = dxOperand.subOperands[0];
 
-                    usilOperand.operandType = USILOperandType.ImmediateConstantBuffer;
-                    usilOperand.registerIndex = icbSlotIdx;
-                    usilOperand.arrayRelative = new USILOperand();
-                    FillUSILOperand(icbOperand, usilOperand.arrayRelative, icbOperand.swizzle, false);
-                    usilOperand.arrayIndex = icbOff;
-                    break;
-                }
+                        usilOperand.operandType = USILOperandType.ImmediateConstantBuffer;
+                        usilOperand.registerIndex = icbSlotIdx;
+                        usilOperand.arrayRelative = new USILOperand();
+                        FillUSILOperand(icbOperand, usilOperand.arrayRelative, icbOperand.swizzle, false);
+                        usilOperand.arrayIndex = icbOff;
+                        break;
+                    }
                 default:
-                {
-                    throw new NotSupportedException($"operand type {dxOperand.operand} not supported");
-                }
+                    {
+                        throw new NotSupportedException($"operand type {dxOperand.operand} not supported");
+                    }
             }
         }
 
@@ -1103,12 +1105,11 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             FillUSILOperand(dest, usilDest, dest.swizzle, false);
             FillUSILOperand(src0, usilSrc0, MapMask(dest.swizzle, src0.swizzle), false);
 
-            usilInst.instructionType = USILInstructionType.Multiply; // todo: hack for now
+            usilInst.instructionType = USILInstructionType.Negate;
             usilInst.destOperand = usilDest;
             usilInst.srcOperands = new List<USILOperand>
             {
-                usilSrc0,
-                new USILOperand(-1)
+                usilSrc0
             };
 
             Instructions.Add(usilInst);
@@ -2311,6 +2312,204 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
         private int ConvertFloatToInt(float f)
         {
             return BitConverter.SingleToInt32Bits(f);
+        }
+    }
+}
+```
+
+### Step 10: `USCSandbox\Program.cs`
+
+**The Fix:** Finally, we update the main entry point to correctly use our new `ShaderProcessor` instead of the placeholder/old logic. This enables file writing and platform selection.
+
+Replace the entire contents of `.\USCSandbox-main\USCSandbox\Program.cs` with this code:
+
+```csharp
+using AssetsTools.NET;
+using AssetsTools.NET.Extra;
+using USCSandbox.Processor;
+using UnityVersion = AssetRipper.Primitives.UnityVersion;
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+namespace USCSandbox
+{
+    internal class Program
+    {
+        static void Main(string[] args)
+        {
+            if (args.Length < 1)
+            {
+                Console.WriteLine("USCS [bundle path] [assets path] [shader path id] <--platform> <--version> <--all>");
+                Console.WriteLine("  [bundle path (or \"null\" for no bundle)]");
+                Console.WriteLine("  [assets path (or file name in bundle)]");
+                Console.WriteLine("  [shader path id (or --all to load all shaders)]");
+                Console.WriteLine("  --platform <[d3d11, Switch] (or skip this arg for d3d11)>");
+                Console.WriteLine("  --version <unity version override>");
+                return;
+            }
+
+            var manager = new AssetsManager();
+            AssetsFileInstance afileInst;
+
+            GPUPlatform platform = GPUPlatform.d3d11;
+            UnityVersion? ver = null;
+            bool allSet = false;
+
+            List<string> argList = new List<string>();
+            for (var i = 0; i < args.Length; i++)
+            {
+                var arg = args[i];
+                if (arg.StartsWith("--"))
+                {
+                    switch (arg)
+                    {
+                        case "--platform":
+                            platform = Enum.Parse<GPUPlatform>(args[++i]);
+                            break;
+                        case "--version":
+                            ver = UnityVersion.Parse(args[++i]);
+                            break;
+                        case "--all":
+                            allSet = true;
+                            break;
+                        default:
+                            Console.WriteLine($"Optional argmuent {arg} is invalid.");
+                            return;
+                    }
+                }
+                else
+                {
+                    argList.Add(arg);
+                }
+            }
+
+            var bundlePath = argList[0];
+            if (argList.Count == 1)
+            {
+                var bundleFile = manager.LoadBundleFile(bundlePath, true);
+                var dirInfs = bundleFile.file.BlockAndDirInfo.DirectoryInfos;
+                Console.WriteLine("Available files in bundle:");
+                foreach (var dirInf in dirInfs)
+                {
+                    if ((dirInf.Flags & 4) == 0)
+                        continue;
+
+                    Console.WriteLine($"  {dirInf.Name}");
+                }
+                return;
+            }
+
+            var assetsFileName = argList[1];
+            if (argList.Count == 2 && !allSet)
+            {
+                if (bundlePath != "null")
+                {
+                    var bundleFile = manager.LoadBundleFile(bundlePath, true);
+                    afileInst = manager.LoadAssetsFileFromBundle(bundleFile, assetsFileName);
+
+                    manager.LoadClassPackage("classdata.tpk");
+                    manager.LoadClassDatabaseFromPackage(bundleFile.file.Header.EngineVersion);
+
+                    Console.WriteLine("Available shaders in bundle:");
+                }
+                else
+                {
+                    afileInst = manager.LoadAssetsFile(assetsFileName);
+
+                    manager.LoadClassPackage("classdata.tpk");
+                    manager.LoadClassDatabaseFromPackage(afileInst.file.Metadata.UnityVersion);
+
+                    Console.WriteLine("Available shaders in assets file:");
+                }
+
+                foreach (var shaderInf in afileInst.file.GetAssetsOfType(AssetClassID.Shader))
+                {
+                    var tmpShaderBf = manager.GetBaseField(afileInst, shaderInf);
+                    var tmpShaderName = tmpShaderBf["m_ParsedForm"]["m_Name"].AsString;
+                    Console.WriteLine($"  {tmpShaderName} (path id {shaderInf.PathId})");
+                }
+                return;
+            }
+
+            long shaderPathId = 0;
+            if (argList.Count > 2)
+                shaderPathId = long.Parse(argList[2]);
+
+            if (bundlePath != "null")
+            {
+                var bundleFile = manager.LoadBundleFile(bundlePath, true);
+                afileInst = manager.LoadAssetsFileFromBundle(bundleFile, assetsFileName);
+
+                if (ver is null)
+                {
+                    var verStr = bundleFile.file.Header.EngineVersion;
+                    if (verStr != "0.0.0")
+                    {
+                        var fixedVerStr = new AssetsTools.NET.Extra.UnityVersion(verStr).ToString();
+                        ver = UnityVersion.Parse(fixedVerStr);
+                    }
+                }
+            }
+            else
+            {
+                afileInst = manager.LoadAssetsFile(assetsFileName);
+
+                if (ver is null)
+                {
+                    var verStr = afileInst.file.Metadata.UnityVersion;
+                    if (verStr != "0.0.0")
+                    {
+                        var fixedVerStr = new AssetsTools.NET.Extra.UnityVersion(verStr).ToString();
+                        ver = UnityVersion.Parse(fixedVerStr);
+                    }
+                }
+            }
+
+            if (ver is null)
+            {
+                Console.WriteLine("File version was stripped. Please set --version flag.");
+                return;
+            }
+
+            manager.LoadClassPackage("classdata.tpk");
+            manager.LoadClassDatabaseFromPackage(ver.ToString());
+
+            var shadersToLoad = new List<AssetFileInfo>();
+            if (shaderPathId != 0)
+                shadersToLoad.Add(afileInst.file.GetAssetInfo(shaderPathId));
+            else
+                shadersToLoad.AddRange(afileInst.file.GetAssetsOfType(AssetClassID.Shader));
+
+            foreach (var shaderInf in shadersToLoad)
+            {
+                var shaderBf = manager.GetBaseField(afileInst, shaderInf);
+                if (shaderBf == null)
+                {
+                    Console.WriteLine("Shader asset not found or couldn't be read.");
+                    return;
+                }
+
+                var shaderName = shaderBf["m_ParsedForm"]["m_Name"].AsString;
+                
+                try
+                {
+                    var shaderProcessor = new ShaderProcessor(shaderBf, ver.Value, platform);
+                    string shaderText = shaderProcessor.Process();
+
+                    string outDir = Path.Combine(Environment.CurrentDirectory, "out", Path.GetDirectoryName(shaderName)!);
+                    Directory.CreateDirectory(outDir);
+                    
+                    string outName = Path.Combine(Environment.CurrentDirectory, "out", shaderName + ".shader");
+                    File.WriteAllText(outName, shaderText);
+                    Console.WriteLine($"[SUCCESS] {shaderName} -> {outName}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERROR] Failed to decompile {shaderName}: {ex.Message}");
+                    Console.WriteLine(ex.StackTrace);
+                }
+            }
         }
     }
 }
