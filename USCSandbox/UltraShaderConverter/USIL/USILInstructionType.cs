@@ -1,4 +1,4 @@
-﻿namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
+namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
 {
     public enum USILInstructionType
     {
@@ -27,6 +27,9 @@
         UIntToFloat, //dx: utof
         FloatToInt, //dx: ftoi
         FloatToUInt, //dx: ftou
+        Negate, //dx: --- (mul,ineg), ryu: Negate
+        Clamp, //dx: ---, ryu: Clamp
+        ClampUInt, //dx: ---, ryu: ClampU32
 
         Minimum, //dx: min
         Maximum, //dx: max
