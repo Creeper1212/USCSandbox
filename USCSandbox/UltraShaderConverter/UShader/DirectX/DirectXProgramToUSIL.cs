@@ -121,7 +121,6 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.ige, HandleGe },
                 { Opcode.uge, HandleGe },
                 { Opcode.ret, HandleRet },
-                ////dec
                 { Opcode.dcl_temps, HandleTemps },
                 { Opcode.dcl_resource, HandleResource },
                 { Opcode.customdata, HandleCustomData }
@@ -259,6 +258,21 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
         ///////////////////////
         // internal stuff
 
+        // Helper to map dimension to USIL type for precise fallback generation
+        private USILOperandType GetOperandTypeFromDimension(ResourceDimension dim)
+        {
+            return dim switch
+            {
+                ResourceDimension.texture1d => USILOperandType.Sampler2D, // Fallback 1D to 2D
+                ResourceDimension.texture2d => USILOperandType.Sampler2D,
+                ResourceDimension.texture3d => USILOperandType.Sampler3D,
+                ResourceDimension.texturecube => USILOperandType.SamplerCube,
+                ResourceDimension.texture2darray => USILOperandType.Sampler2DArray,
+                ResourceDimension.texturecubearray => USILOperandType.SamplerCubeArray,
+                _ => USILOperandType.ResourceRegister
+            };
+        }
+
         private void FillUSILOperand(SHDRInstructionOperand dxOperand, USILOperand usilOperand, int[] mask, bool immIsInt)
         {
             usilOperand.mask = mask;
@@ -346,7 +360,8 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                     {
                         int rscRegIdx = dxOperand.arraySizes[0];
 
-                        usilOperand.operandType = USILOperandType.ResourceRegister;
+                        ResourceDimension dim = _resourceToDimension.TryGetValue(rscRegIdx, out var d) ? d : ResourceDimension.Unknown;
+                        usilOperand.operandType = GetOperandTypeFromDimension(dim);
                         usilOperand.registerIndex = rscRegIdx;
                         break;
                     }
@@ -1476,7 +1491,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             int[] mask = new int[] { 0, 1, 2, 3 };
 
-            ResourceDimension dimension = _resourceToDimension[srcResource.arraySizes[0]];
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
             int[] uvMask = GetSampleLocationMask(dimension);
 
             FillUSILOperand(dest, usilDest, dest.swizzle, false);
@@ -1515,7 +1530,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             int[] mask = new int[] { 0, 1, 2, 3 };
 
-            ResourceDimension dimension = _resourceToDimension[srcResource.arraySizes[0]];
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
             int[] uvMask = GetSampleLocationMask(dimension);
 
             FillUSILOperand(dest, usilDest, dest.swizzle, false);
@@ -1564,7 +1579,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             int[] mask = new int[] { 0, 1, 2, 3 };
 
-            ResourceDimension dimension = _resourceToDimension[srcResource.arraySizes[0]];
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
             int[] uvMask = GetSampleLocationMask(dimension);
 
             FillUSILOperand(dest, usilDest, dest.swizzle, false);
@@ -1614,7 +1629,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             int[] mask = new int[] { 0, 1, 2, 3 };
 
-            ResourceDimension dimension = _resourceToDimension[srcResource.arraySizes[0]];
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
             int[] uvMask = GetSampleLocationMask(dimension);
 
             FillUSILOperand(dest, usilDest, dest.swizzle, false);
@@ -1650,7 +1665,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             USILOperand usilSrcAddress = new USILOperand();
             USILOperand usilSrcResource = new USILOperand();
 
-            ResourceDimension dimension = _resourceToDimension[srcResource.arraySizes[0]];
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
             int[] uvMask = GetLoadLocationMask(dimension);
 
             FillUSILOperand(dest, usilDest, dest.swizzle, false);

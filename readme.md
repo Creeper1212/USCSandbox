@@ -1,24 +1,26 @@
 # USCSandbox
 
-**USCSandbox** is a high-performance, headless Unity shader decompiler designed to translate compiled shader binaries (DXBC/NVN) back into readable, compilable Unity HLSL. Based on an enhanced version of the Ultra Shader Converter (USC), this tool is engineered to handle the complexities of modern Unity versions, including **Unity 6**.
+**USCSandbox** is a high-performance, headless Unity shader decompiler designed to translate compiled shader binaries (DXBC/NVN) back into readable, compilable Unity HLSL. Based on an enhanced version of the Ultra Shader Converter (USC), this tool is engineered to handle the complexities of modern Unity versions, including **Unity 6**, with an emphasis on **high-fidelity code generation and zero data loss**.
 
 ## 🚀 Key Features
 
+*   **100% Code Completeness (New)**: Even when Unity strips reflection metadata, USCSandbox infers exact resource dimensions (Cube, 3D, 2DArray, Structured, Raw) directly from bytecode instructions. This guarantees compile-ready fallback declarations (e.g., `TextureCube<float4>`) instead of generic or broken types.
+*   **Universal Optimizer Execution (New)**: High-level math patterns (like `normalize()`, `length()`, `lerp()`, and Unity macros) are aggressively reconstructed across *all* shader variants, regardless of missing parameter data.
 *   **Unity 6 & 2022.x LTS Ready**: Robust handling of Merged Keyword arrays and External Parameter Blobs introduced in the latest engine iterations.
 *   **Intelligent Variant Grouping**: Eliminates the "million-line shader" problem. It analyzes all variants within a pass and automatically generates compact code using `#if`, `#elif`, and `#endif` preprocessor directives.
 *   **Full Nintendo Switch (NVN) Support**: Utilizes the Ryujinx IR translation layer to provide functional decompilation for Switch binaries.
-*   **Culture-Invariant Output**: Fixed the "German Comma" bug; ensures floating-point numbers use the correct `.` separator regardless of the host system's regional settings.
+*   **Culture-Invariant Output**: Prevents formatting corruption; ensures floating-point numbers consistently use the `.` separator regardless of the host system's regional settings.
 *   **Segmented Blob Parsing**: Correctly handles segmented shader storage (Unity 2019.3+) which previously caused crashes in older decompilers.
-*   **Metadata Merging**: Automatically pulls "Common Parameters" from asset metadata to resolve missing global variables like `unity_ObjectToWorld` or `_Time`.
+*   **Comprehensive Logging**: Features structured, timestamped file logging (`logs/session-*.log`) and isolated per-shader logs, allowing for easy debugging without breaking batch extraction runs.
 
 ## 🛠 Supported Architectures
 
-*   **DirectX 11 (PC)**: Full support for Shader Model 4.0 and 5.0.
+*   **DirectX 11 (PC)**: Full support for Shader Model 4.0 and 5.0. Includes advanced opcode coverage (`sample_b`, `bfi`, `ubfe`, `ld_raw`, `ld_structured`, etc.).
 *   **Nintendo Switch (NVN)**: Functional translation via Ryujinx.Graphics.Shader.
 
 ## 💻 How to Use
 
-The tool is a standalone CLI executable.
+The tool is a standalone CLI executable. Ensure `classdata.tpk` is located next to the executable before running.
 
 ```bash
 USCS [bundle path] [assets path] [shader path id] <--platform> <--version> <--all>
@@ -39,19 +41,21 @@ USCS [bundle path] [assets path] [shader path id] <--platform> <--version> <--al
 uscsandbox Game.bundle CAB-1234 55 --version 6000.0.1f1
 ```
 
-**Decompile all shaders for Nintendo Switch:**
+**Decompile all shaders from a shared assets file:**
 ```bash
-uscsandbox null globalgamemanagers.assets 0 --platform Switch --all
+uscsandbox null sharedassets0.assets 0 --all --version 2022.3.2f1
 ```
 
 ## 🧠 Technical Overview
 
-1.  **Metadata Extraction**: The tool parses the `SerializedShader` metadata to map hardware registers to human-readable names. It merges blob-local parameters with global "Common" parameters.
-2.  **USIL Translation**: Compiled bytecode is lifted into **Ultra Shader Intermediate Language (USIL)**.
-3.  **Fixer Pipeline**:
+1.  **Metadata Extraction & Merging**: The tool parses the `SerializedShader` metadata to map hardware registers to human-readable names. It dynamically merges blob-local parameters with global "Common" parameters. 
+2.  **Bytecode Type Inference**: When metadata is missing, USCSandbox scans the DXBC headers (`dcl_resource`) to accurately type resources as `Texture2DArray`, `TextureCube`, or `StructuredBuffer` rather than defaulting to raw data buffers.
+3.  **USIL Translation**: Compiled bytecode is lifted into **Ultra Shader Intermediate Language (USIL)**.
+4.  **Optimizer & Fixer Pipeline**:
+    *   **High-Level Math**: Reconstructs low-level math clusters back into readable HLSL operations.
     *   **SamplerFixer**: Identifies internal Unity textures (e.g., `unity_Lightmap`) to assign correct sampler states.
     *   **DimensionsFixer**: Consolidates multiple `resinfo` queries into standard HLSL `GetDimensions` calls.
-4.  **HLSL Reconstruction**: USIL is converted into a structured `.shader` file containing standard `Properties`, `SubShader`, and `Pass` blocks.
+5.  **HLSL Reconstruction**: USIL is converted into a structured `.shader` file containing standard `Properties`, `SubShader`, and `Pass` blocks, cleanly wrapped in keyword `#if` blocks.
 
 ## ⚖️ License & Credits
 
@@ -63,4 +67,4 @@ This project is a standalone rework of the shader exporter found in [AssetRipper
 *   [3dmigoto](https://github.com/bo3b/3Dmigoto) (DirectX disassembly foundations)
 
 ---
-*Note: This project is not affiliated with AssetRipper Premium. For support with modern Unity 6 assets, please use the latest build of this tool.*
+*Note: This project is an independent optimization fork. For support with modern Unity 6 assets, please use the latest builds from this repository.*

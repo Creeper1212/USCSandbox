@@ -16,6 +16,22 @@ namespace USCSandbox.Processor
         public List<UAVParameter> UAVs;
         public List<SamplerParameter> Samplers;
 
+        /// <summary>
+        /// Creates an empty metadata container.
+        /// This allows the optimizer pipeline (e.g., HighLevelMathOptimizer) to run safely 
+        /// on shader variants that lack reflection/metadata data, ensuring high-fidelity 
+        /// decompilation (like normalize() calls) even in fallback scenarios.
+        /// </summary>
+        public ShaderParams()
+        {
+            ConstantBuffers = new List<ConstantBuffer>();
+            TextureParameters = new List<TextureParameter>();
+            ConstBindings = new List<BufferBinding>();
+            Buffers = new List<BufferBinding>();
+            UAVs = new List<UAVParameter>();
+            Samplers = new List<SamplerParameter>();
+        }
+
         public ShaderParams(AssetsFileReader r, UnityVersion engVer, bool readBlobVersion)
         {
             if (readBlobVersion)

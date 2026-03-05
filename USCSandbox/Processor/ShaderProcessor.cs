@@ -150,7 +150,7 @@ namespace USCSandbox.Processor
                 ShaderGpuProgramType ProgramType,
                 string[] Keywords,
                 string KeywordSet,
-                ShaderParams? Params,
+                ShaderParams Params,
                 UShaderProgram? Program,
                 bool Unsupported)>();
             Dictionary<string, Dictionary<int, FallbackResourceKind>> fallbackResourcesByKeywordSet = new(StringComparer.Ordinal);
@@ -167,18 +167,15 @@ namespace USCSandbox.Processor
                     .ToArray();
                 Logger.Debug($"Variant: pass='{passName}', programType={programType}, keywords=[{string.Join(", ", keywords)}]");
 
-                ShaderParams? param = basket.index >= 0
+                // If index is invalid, provide an empty ShaderParams block instead of null so the optimizers run.
+                ShaderParams param = basket.index >= 0
                     ? blobManager.GetShaderParams(basket.index)
-                    : subProg.ShaderParams;
+                    : (subProg.ShaderParams ?? new ShaderParams());
+                
                 string keywordSet = string.Join("-", keywords);
-                if (param is null)
-                {
-                    Logger.Debug($"Variant has null ShaderParams: pass='{passName}', programType={programType}, paramIndex={basket.index}");
-                }
-                else
-                {
-                    param.CombineCommon(basket.progInfo);
-                }
+                
+                // Still combine common properties
+                param.CombineCommon(basket.progInfo);
 
                 USCShaderConverter converter = new USCShaderConverter();
                 if (programType.IsDirectX())
@@ -200,10 +197,8 @@ namespace USCSandbox.Processor
                     continue;
                 }
 
-                if (param is not null)
-                {
-                    converter.ApplyMetadataToProgram(subProg, param, _engVer);
-                }
+                // This now ALWAYS runs! Even without named metadata, matrices and dot products are optimized
+                converter.ApplyMetadataToProgram(subProg, param, _engVer);
 
                 Dictionary<int, FallbackResourceKind> variantResourceKinds = new();
                 HashSet<int> variantSamplerRegisters = new();
@@ -233,21 +228,19 @@ namespace USCSandbox.Processor
                     declaredCBufs.Add(variant.KeywordSet, declaredSet);
                 }
 
-                if (variant.Params is not null)
+                // Output params if they exist (our empty block won't output anything, which is correct)
+                _sb.AppendNoIndent($"{indent}// CBs for {variant.ProgramType}\n");
+                foreach (ConstantBuffer cbuffer in variant.Params.ConstantBuffers)
                 {
-                    _sb.AppendNoIndent($"{indent}// CBs for {variant.ProgramType}\n");
-                    foreach (ConstantBuffer cbuffer in variant.Params.ConstantBuffers)
-                    {
-                        _sb.AppendNoIndent(WritePassCBuffer(variant.Params, declaredSet, cbuffer, depth));
-                    }
-
-                    _sb.AppendNoIndent($"{indent}// Textures for {variant.ProgramType}\n");
-                    _sb.AppendNoIndent(WritePassTextures(variant.Params, declaredSet, depth));
-
-                    _sb.AppendNoIndent($"{indent}// Buffers for {variant.ProgramType}\n");
-                    _sb.AppendNoIndent(WritePassBuffers(variant.Params, declaredSet, depth));
-                    Logger.Debug($"Applied metadata: cbufferCount={variant.Params.ConstantBuffers.Count}, textureCount={variant.Params.TextureParameters.Count}");
+                    _sb.AppendNoIndent(WritePassCBuffer(variant.Params, declaredSet, cbuffer, depth));
                 }
+
+                _sb.AppendNoIndent($"{indent}// Textures for {variant.ProgramType}\n");
+                _sb.AppendNoIndent(WritePassTextures(variant.Params, declaredSet, depth));
+
+                _sb.AppendNoIndent($"{indent}// Buffers for {variant.ProgramType}\n");
+                _sb.AppendNoIndent(WritePassBuffers(variant.Params, declaredSet, depth));
+                Logger.Debug($"Applied metadata: cbufferCount={variant.Params.ConstantBuffers.Count}, textureCount={variant.Params.TextureParameters.Count}");
 
                 if (variant.Unsupported || variant.Program is null)
                 {
@@ -443,15 +436,19 @@ namespace USCSandbox.Processor
                     sb.Append(new string(' ', depth * 4));
                     string declaration = fallback.Value switch
                     {
-                        FallbackResourceKind.Texture => "Texture2D<float4>",
+                        FallbackResourceKind.Texture2D => "Texture2D<float4>",
+                        FallbackResourceKind.Texture3D => "Texture3D<float4>",
+                        FallbackResourceKind.TextureCube => "TextureCube<float4>",
+                        FallbackResourceKind.Texture2DArray => "Texture2DArray<float4>",
+                        FallbackResourceKind.TextureCubeArray => "TextureCubeArray<float4>",
                         FallbackResourceKind.Structured => "StructuredBuffer<float4>",
                         _ => "ByteAddressBuffer",
                     };
                     string kindComment = fallback.Value switch
                     {
-                        FallbackResourceKind.Texture => "texture",
                         FallbackResourceKind.Structured => "structured",
-                        _ => "raw",
+                        FallbackResourceKind.Raw => "raw",
+                        _ => "texture",
                     };
                     sb.AppendLine($"{declaration} {name}; // unresolved {kindComment} fallback t{fallback.Key}");
                     declaredNames.Add(name);
@@ -464,7 +461,7 @@ namespace USCSandbox.Processor
                 if (!declaredNames.Contains(name))
                 {
                     sb.Append(new string(' ', depth * 4));
-                    sb.AppendLine($"sampler2D {name}; // unresolved sampler fallback s{samplerRegister}");
+                    sb.AppendLine($"sampler smp{samplerRegister}; // unresolved sampler fallback s{samplerRegister}");
                     declaredNames.Add(name);
                 }
             }
@@ -474,7 +471,11 @@ namespace USCSandbox.Processor
 
         private enum FallbackResourceKind
         {
-            Texture,
+            Texture2D,
+            Texture3D,
+            TextureCube,
+            Texture2DArray,
+            TextureCubeArray,
             Structured,
             Raw,
         }
@@ -554,9 +555,17 @@ namespace USCSandbox.Processor
             Dictionary<int, FallbackResourceKind> resourceKinds,
             HashSet<int> unresolvedSamplerRegisters)
         {
-            if (operand.operandType == USILOperandType.ResourceRegister && !operand.metadataNameAssigned)
+            // Now checks for ANY of the precise sampler types we generate in DirectXProgramToUSIL
+            bool isResource = operand.operandType == USILOperandType.ResourceRegister ||
+                              operand.operandType == USILOperandType.Sampler2D ||
+                              operand.operandType == USILOperandType.Sampler3D ||
+                              operand.operandType == USILOperandType.SamplerCube ||
+                              operand.operandType == USILOperandType.Sampler2DArray ||
+                              operand.operandType == USILOperandType.SamplerCubeArray;
+
+            if (isResource && !operand.metadataNameAssigned)
             {
-                FallbackResourceKind inferredKind = InferFallbackResourceKind(instructionType);
+                FallbackResourceKind inferredKind = InferFallbackResourceKind(instructionType, operand.operandType);
                 if (resourceKinds.TryGetValue(operand.registerIndex, out FallbackResourceKind existingKind))
                 {
                     resourceKinds[operand.registerIndex] = MergeFallbackResourceKinds(existingKind, inferredKind);
@@ -590,8 +599,18 @@ namespace USCSandbox.Processor
             }
         }
 
-        private static FallbackResourceKind InferFallbackResourceKind(USILInstructionType instructionType)
+        private static FallbackResourceKind InferFallbackResourceKind(USILInstructionType instructionType, USILOperandType opType)
         {
+            // If it's a specific dimensionality extracted from DX metadata, use it directly
+            switch (opType)
+            {
+                case USILOperandType.Sampler3D: return FallbackResourceKind.Texture3D;
+                case USILOperandType.SamplerCube: return FallbackResourceKind.TextureCube;
+                case USILOperandType.Sampler2DArray: return FallbackResourceKind.Texture2DArray;
+                case USILOperandType.SamplerCubeArray: return FallbackResourceKind.TextureCubeArray;
+                case USILOperandType.Sampler2D: return FallbackResourceKind.Texture2D;
+            }
+
             return instructionType switch
             {
                 USILInstructionType.Sample or
@@ -603,7 +622,7 @@ namespace USCSandbox.Processor
                 USILInstructionType.LoadResource or
                 USILInstructionType.LoadResourceMultisampled or
                 USILInstructionType.ResourceDimensionInfo or
-                USILInstructionType.GetDimensions => FallbackResourceKind.Texture,
+                USILInstructionType.GetDimensions => FallbackResourceKind.Texture2D,
                 USILInstructionType.LoadResourceStructured => FallbackResourceKind.Structured,
                 _ => FallbackResourceKind.Raw,
             };
@@ -618,17 +637,18 @@ namespace USCSandbox.Processor
                 return existingKind;
             }
 
-            if (existingKind == FallbackResourceKind.Raw || incomingKind == FallbackResourceKind.Raw)
-            {
-                return FallbackResourceKind.Raw;
-            }
+            // Always upgrade Raw -> Structured -> Texture(X)
+            if (existingKind == FallbackResourceKind.Raw) return incomingKind;
+            if (incomingKind == FallbackResourceKind.Raw) return existingKind;
 
-            if (existingKind == FallbackResourceKind.Structured || incomingKind == FallbackResourceKind.Structured)
-            {
-                return FallbackResourceKind.Structured;
-            }
+            if (existingKind == FallbackResourceKind.Structured) return incomingKind;
+            if (incomingKind == FallbackResourceKind.Structured) return existingKind;
 
-            return FallbackResourceKind.Texture;
+            // If we hit here, they are both Textures but of different dimensions.
+            // In a valid shader this shouldn't happen, but prefer the incoming if it's more complex than 2D.
+            if (existingKind == FallbackResourceKind.Texture2D) return incomingKind;
+            
+            return existingKind;
         }
 
         private void WriteProperties(AssetTypeValueField propInfo)
