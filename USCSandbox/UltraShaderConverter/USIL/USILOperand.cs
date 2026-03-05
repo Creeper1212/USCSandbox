@@ -1,5 +1,6 @@
-﻿using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX;
+using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX;
 using System.Globalization;
+using System.Linq;
 
 namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
 {
@@ -7,8 +8,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
     {
         public USILOperandType operandType;
 
-        public int[] immValueInt = Array.Empty<int>();
-        public float[] immValueFloat = Array.Empty<float>();
+        public int[] immValueInt = new int[0];
+        public float[] immValueFloat = new float[0];
+        public bool immIsInt; // useless
 
         public bool absoluteValue;
         public bool negative;
@@ -24,7 +26,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
 
         public string comment = string.Empty;
 
-        public USILOperand[] children = Array.Empty<USILOperand>();
+        public USILOperand[] children = new USILOperand[0];
 
         public int[] mask;
         public bool displayMask;
@@ -32,6 +34,8 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         public USILOperand()
         {
             operandType = USILOperandType.None;
+
+            immIsInt = false;
 
             absoluteValue = false;
             negative = false;
@@ -45,7 +49,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
             metadataNameAssigned = false;
             metadataNameWithArray = false;
 
-            mask = Array.Empty<int>();
+            mask = new int[0];
             displayMask = true;
         }
 
@@ -55,6 +59,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
 
             immValueInt = original.immValueInt;
             immValueFloat = original.immValueFloat;
+            immIsInt = original.immIsInt;
 
             absoluteValue = original.absoluteValue;
             negative = original.negative;
@@ -91,15 +96,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         public USILOperand(int value)
         {
             operandType = USILOperandType.ImmediateInt;
-            immValueInt = new[] { value };
-            mask = new[] { 0 };
+            immValueInt = new int[] { value };
+            immIsInt = true;
+            mask = new int[] { 0 };
         }
 
         public USILOperand(float value)
         {
             operandType = USILOperandType.ImmediateFloat;
-            immValueFloat = new[] { value };
-            mask = new[] { 0 };
+            immValueFloat = new float[] { value };
+            immIsInt = false;
+            mask = new int[] { 0 };
         }
 
         public int GetValueCount()
@@ -163,20 +170,20 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
                 switch (operandType)
                 {
                     case USILOperandType.None:
-                    {
-                        body = "none";
-                        break;
-                    }
+                        {
+                            body = "none";
+                            break;
+                        }
                     case USILOperandType.Null:
-                    {
-                        body = "null";
-                        break;
-                    }
+                        {
+                            body = "null";
+                            break;
+                        }
                     case USILOperandType.Comment:
-                    {
-                        body = comment;
-                        break;
-                    }
+                        {
+                            body = comment;
+                            break;
+                        }
                     case USILOperandType.TempRegister:
                     case USILOperandType.InputRegister:
                     case USILOperandType.OutputRegister:
@@ -185,92 +192,89 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
                     case USILOperandType.Sampler2D:
                     case USILOperandType.Sampler3D:
                     case USILOperandType.SamplerCube:
-                    {
-                        body = $"{registerIndex}";
-                        break;
-                    }
+                        {
+                            body = $"{registerIndex}";
+                            break;
+                        }
                     case USILOperandType.IndexableTempRegister:
-                    {
-                        body = $"{registerIndex}[{arrayIndex}]";
-                        break;
-                    }
+                        {
+                            body = $"{registerIndex}[{arrayIndex}]";
+                            break;
+                        }
                     case USILOperandType.ConstantBuffer:
                     case USILOperandType.Matrix:
-                    {
-                        body = $"{registerIndex}";
-                        break;
-                    }
+                        {
+                            body = $"{registerIndex}";
+                            break;
+                        }
                     case USILOperandType.ImmediateConstantBuffer:
-                    {
-                        body = "";
-                        break;
-                    }
+                        {
+                            body = "";
+                            break;
+                        }
                     case USILOperandType.ImmediateInt:
-                    {
-                        if (immValueInt.Length == 1)
                         {
-                            body = $"{immValueInt[0]}";
-                        }
-                        else
-                        {
-                            body += $"int{immValueInt.Length}(";
-                            for (int i = 0; i < immValueInt.Length; i++)
+                            if (immValueInt.Length == 1)
                             {
-                                if (i != immValueInt.Length - 1)
-                                {
-                                    body += $"{immValueInt[i]}, ";
-                                }
-                                else
-                                {
-                                    body += $"{immValueInt[i]}";
-                                }
+                                body = $"{immValueInt[0]}";
                             }
-                            body += ")";
+                            else //if (immValueInt.Length > 1)
+                            {
+                                body += $"int{immValueInt.Length}(";
+                                for (int i = 0; i < immValueInt.Length; i++)
+                                {
+                                    if (i != immValueInt.Length - 1)
+                                    {
+                                        body += $"{immValueInt[i]}, ";
+                                    }
+                                    else
+                                    {
+                                        body += $"{immValueInt[i]}";
+                                    }
+                                }
+                                body += ")";
+                            }
+                            break;
                         }
-                        break;
-                    }
                     case USILOperandType.ImmediateFloat:
-                    {
-                        if (immValueFloat.Length == 1)
                         {
-                            // todo: check if number can't possibly be expressed as float and write in hex.
-                            // todo: float precision isn't correct atm. add precision check somewhere.
-                            body = $"{immValueFloat[0].ToString("0.0#######", CultureInfo.InvariantCulture)}";
-                        }
-                        else
-                        {
-                            // todo: if all numbers are the same and it matches the mask, use it only once
-                            body += $"float{immValueFloat.Length}(";
-                            for (int i = 0; i < immValueFloat.Length; i++)
+                            if (immValueFloat.Length == 1)
                             {
-                                if (i != immValueFloat.Length - 1)
-                                {
-                                    body += $"{immValueFloat[i].ToString("0.0#######", CultureInfo.InvariantCulture)}, ";
-                                }
-                                else
-                                {
-                                    body += $"{immValueFloat[i].ToString("0.0#######", CultureInfo.InvariantCulture)}";
-                                }
+                                body = $"{immValueFloat[0].ToString("0.0######", CultureInfo.InvariantCulture)}";
                             }
-                            body += ")";
+                            else //if (immValueFloat.Length > 1)
+                            {
+                                body += $"float{immValueFloat.Length}(";
+                                for (int i = 0; i < immValueFloat.Length; i++)
+                                {
+                                    if (i != immValueFloat.Length - 1)
+                                    {
+                                        body += $"{immValueFloat[i].ToString("0.0######", CultureInfo.InvariantCulture)}, ";
+                                    }
+                                    else
+                                    {
+                                        body += $"{immValueFloat[i].ToString("0.0######", CultureInfo.InvariantCulture)}";
+                                    }
+                                }
+                                body += ")";
+                            }
+                            break;
                         }
-                        break;
-                    }
                     case USILOperandType.Multiple:
-                    {
-                        body += $"float{GetValueCount()}({string.Join(", ", children.ToList())})";
-                        break;
-                    }
+                        {
+                            body += $"float{GetValueCount()}({string.Join(", ", children.Select(c => c.ToString()))})";
+                            break;
+                        }
 
                     default:
-                    {
-                        if (DXShaderNamingUtils.HasSpecialInputOutputName(operandType))
                         {
-                            body = DXShaderNamingUtils.GetSpecialInputOutputName(operandType);
+                            if (DXShaderNamingUtils.HasSpecialInputOutputName(operandType))
+                            {
+                                body = DXShaderNamingUtils.GetSpecialInputOutputName(operandType);
+                            }
+                            break;
                         }
-                        break;
-                    }
-                };
+                }
             }
 
             if (!metadataNameAssigned || metadataNameWithArray)
@@ -279,29 +283,29 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
                 {
                     case USILOperandType.ConstantBuffer:
                     case USILOperandType.Matrix:
-                    {
-                        if (arrayRelative != null)
                         {
-                            if (arrayIndex == 0)
+                            if (arrayRelative != null)
                             {
-                                body += $"[{arrayRelative}]";
+                                if (arrayIndex == 0)
+                                {
+                                    body += $"[{arrayRelative}]";
+                                }
+                                else
+                                {
+                                    body += $"[{arrayRelative} + {arrayIndex}]";
+                                }
                             }
                             else
                             {
-                                body += $"[{arrayRelative} + {arrayIndex}]";
+                                body += $"[{arrayIndex}]";
                             }
+                            break;
                         }
-                        else
-                        {
-                            body += $"[{arrayIndex}]";
-                        }
-                        break;
-                    }
                     case USILOperandType.ImmediateConstantBuffer:
-                    {
-                        body += $"[{arrayRelative} + {arrayIndex}]";
-                        break;
-                    }
+                        {
+                            body += $"[{arrayRelative} + {arrayIndex}]";
+                            break;
+                        }
                 }
             }
 
