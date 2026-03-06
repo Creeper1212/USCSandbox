@@ -318,6 +318,7 @@ namespace USCSandbox
             List<string> bundles = new();
             List<string> assets = new();
             List<string> noExtAssets = new();
+            List<(string BundlePath, string AssetName)> bundleAssets = new();
 
             foreach (string file in EnumerateFilesSafe(rootPath))
             {
@@ -342,6 +343,15 @@ namespace USCSandbox
             assets.Sort(StringComparer.OrdinalIgnoreCase);
             noExtAssets.Sort(StringComparer.OrdinalIgnoreCase);
 
+            if (bundles.Count > 0)
+            {
+                AssetsManager scanManager = new();
+                for (int i = 0; i < bundles.Count; i++)
+                {
+                    AddBundleAssetEntries(scanManager, bundles[i], bundleAssets);
+                }
+            }
+
             ConsoleUi.Section($"Bundles ({bundles.Count})");
             foreach (string path in bundles)
             {
@@ -360,7 +370,14 @@ namespace USCSandbox
                 ConsoleUi.ListItem(Path.GetRelativePath(rootPath, path));
             }
 
-            if (bundles.Count == 0 && assets.Count == 0 && noExtAssets.Count == 0)
+            ConsoleUi.Section($"Assets Inside Bundles ({bundleAssets.Count})");
+            foreach ((string bundlePath, string assetName) in bundleAssets)
+            {
+                string relBundle = Path.GetRelativePath(rootPath, bundlePath);
+                ConsoleUi.ListItem($"{relBundle} -> {assetName}");
+            }
+
+            if (bundles.Count == 0 && assets.Count == 0 && noExtAssets.Count == 0 && bundleAssets.Count == 0)
             {
                 ConsoleUi.Warning("No Unity bundle/asset files were found.");
                 return;
@@ -375,9 +392,48 @@ namespace USCSandbox
             {
                 ConsoleUi.ListItem($"USCSandbox null \"{assets[0]}\" 0 --all");
             }
-            if (bundles.Count > 0)
+            if (bundleAssets.Count > 0)
+            {
+                (string firstBundle, string firstAsset) = bundleAssets[0];
+                ConsoleUi.ListItem($"USCSandbox \"{firstBundle}\" \"{firstAsset}\"");
+                ConsoleUi.ListItem($"USCSandbox \"{firstBundle}\" \"{firstAsset}\" 0 --all");
+            }
+            else if (bundles.Count > 0)
             {
                 ConsoleUi.ListItem($"USCSandbox \"{bundles[0]}\" \"sharedassets0.assets\" 0 --all");
+            }
+        }
+
+        private static void AddBundleAssetEntries(
+            AssetsManager manager,
+            string bundlePath,
+            List<(string BundlePath, string AssetName)> results)
+        {
+            try
+            {
+                var bundleFile = manager.LoadBundleFile(bundlePath, true);
+                var dirInfos = bundleFile.file.BlockAndDirInfo.DirectoryInfos;
+                for (int i = 0; i < dirInfos.Count; i++)
+                {
+                    var dirInfo = dirInfos[i];
+                    if ((dirInfo.Flags & 4) == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!dirInfo.Name.EndsWith(".assets", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    results.Add((bundlePath, dirInfo.Name));
+                }
+            }
+            catch (Exception ex)
+            {
+                string message = $"Unable to inspect bundle contents: {bundlePath}";
+                ConsoleUi.Warning(message);
+                Logger.Exception(message, ex);
             }
         }
 
