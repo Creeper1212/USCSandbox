@@ -5,6 +5,7 @@ using AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using USCSandbox.Processor;
 
 namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.DirectX
 {
@@ -23,10 +24,15 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
         private Dictionary<Opcode, InstHandler> _instructionHandlers;
 
         private Dictionary<int, ResourceDimension> _resourceToDimension;
+        private Dictionary<int, ResourceDimension> _uavToDimension;
+        private Dictionary<int, int> _resourceToStructuredStride;
+        private Dictionary<int, int> _uavToStructuredStride;
+        private readonly ShaderParams? _shaderParams;
 
-        public DirectXProgramToUSIL(DirectXCompiledShader dxShader)
+        public DirectXProgramToUSIL(DirectXCompiledShader dxShader, ShaderParams? shaderParams = null)
         {
             _dxShader = dxShader;
+            _shaderParams = shaderParams;
 
             shader = new UShaderProgram();
 
@@ -50,6 +56,11 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.bfi, HandleBfi },
                 { Opcode.ubfe, HandleBfe },
                 { Opcode.ibfe, HandleBfe },
+                { Opcode.bfrev, HandleBitUnary },
+                { Opcode.countbits, HandleBitUnary },
+                { Opcode.firstbit_hi, HandleBitUnary },
+                { Opcode.firstbit_shi, HandleBitUnary },
+                { Opcode.firstbit_lo, HandleBitUnary },
                 { Opcode.ftoi, HandleFtoi },
                 { Opcode.ftou, HandleFtoi },
                 { Opcode.itof, HandleItof },
@@ -84,10 +95,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.sample_l, HandleSampleL },
                 { Opcode.sample_b, HandleSampleL },
                 { Opcode.sample_d, HandleSampleD },
+                { Opcode.gather4, HandleGather4 },
+                { Opcode.gather4_c, HandleGather4C },
+                { Opcode.lod, HandleLod },
                 { Opcode.ld, HandleLd },
                 { Opcode.ldms, HandleLd },
                 { Opcode.ld_raw, HandleLdRaw },
                 { Opcode.ld_structured, HandleLdStructured },
+                { Opcode.atomic_iadd, HandleAtomicIAdd },
+                { Opcode.imm_atomic_alloc, HandleAtomicCounter },
+                { Opcode.imm_atomic_consume, HandleAtomicCounter },
+                { Opcode.sync, HandleSync },
                 { Opcode.discard, HandleDiscard },
                 { Opcode.resinfo, HandleResInfo },
                 { Opcode.sampleinfo, HandleSampleInfo },
@@ -123,10 +141,18 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 { Opcode.ret, HandleRet },
                 { Opcode.dcl_temps, HandleTemps },
                 { Opcode.dcl_resource, HandleResource },
+                { Opcode.dcl_resource_raw, HandleResource },
+                { Opcode.dcl_resource_structured, HandleResource },
+                { Opcode.dcl_uav_typed, HandleResource },
+                { Opcode.dcl_uav_raw, HandleResource },
+                { Opcode.dcl_uav_structured, HandleResource },
                 { Opcode.customdata, HandleCustomData }
             };
 
             _resourceToDimension = new Dictionary<int, ResourceDimension>();
+            _uavToDimension = new Dictionary<int, ResourceDimension>();
+            _resourceToStructuredStride = new Dictionary<int, int>();
+            _uavToStructuredStride = new Dictionary<int, int>();
         }
 
         public void Convert()
@@ -363,6 +389,22 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                         ResourceDimension dim = _resourceToDimension.TryGetValue(rscRegIdx, out var d) ? d : ResourceDimension.Unknown;
                         usilOperand.operandType = GetOperandTypeFromDimension(dim);
                         usilOperand.registerIndex = rscRegIdx;
+                        break;
+                    }
+                case Operand.UnorderedAccessView:
+                    {
+                        int uavRegIdx = dxOperand.arraySizes[0];
+
+                        ResourceDimension dim = _uavToDimension.TryGetValue(uavRegIdx, out var d) ? d : ResourceDimension.Unknown;
+                        usilOperand.operandType = GetOperandTypeFromDimension(dim);
+                        usilOperand.registerIndex = uavRegIdx;
+                        break;
+                    }
+                case Operand.ThreadGroupSharedMemory:
+                    {
+                        int tgsmRegIdx = dxOperand.arraySizes.Length > 0 ? dxOperand.arraySizes[0] : 0;
+                        usilOperand.operandType = USILOperandType.ResourceRegister;
+                        usilOperand.registerIndex = tgsmRegIdx;
                         break;
                     }
                 case Operand.Sampler:
@@ -1360,6 +1402,43 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
                 usilSrc1
             };
             usilInst.isIntVariant = true;
+            usilInst.isIntUnsigned = inst.opcode == Opcode.ushr;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleBitUnary(SHDRInstruction inst)
+        {
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand src0 = inst.operands[1];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrc0 = new USILOperand();
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, true);
+            FillUSILOperand(src0, usilSrc0, MapMask(dest.swizzle, src0.swizzle), true);
+
+            usilInst.instructionType = inst.opcode switch
+            {
+                Opcode.bfrev => USILInstructionType.BitReverse,
+                Opcode.countbits => USILInstructionType.CountBits,
+                Opcode.firstbit_lo => USILInstructionType.FirstBitLow,
+                Opcode.firstbit_hi => USILInstructionType.FirstBitHigh,
+                Opcode.firstbit_shi => USILInstructionType.FirstBitHigh,
+                _ => USILInstructionType.Move
+            };
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilSrc0
+            };
+            usilInst.isIntVariant = true;
+            usilInst.isIntUnsigned =
+                inst.opcode == Opcode.bfrev ||
+                inst.opcode == Opcode.countbits ||
+                inst.opcode == Opcode.firstbit_lo ||
+                inst.opcode == Opcode.firstbit_hi;
 
             Instructions.Add(usilInst);
         }
@@ -1654,6 +1733,126 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             Instructions.Add(usilInst);
         }
 
+        private void HandleGather4(SHDRInstruction inst)
+        {
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcAddress = inst.operands[1];
+            SHDRInstructionOperand srcResource = inst.operands[2];
+            SHDRInstructionOperand srcSampler = inst.operands[3];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrcAddress = new USILOperand();
+            USILOperand usilSrcResource = new USILOperand();
+            USILOperand usilSrcSampler = new USILOperand();
+            USILOperand usilSamplerType = new USILOperand(0);
+
+            int[] samplerMask = new int[] { 0, 1, 2, 3 };
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
+            int[] uvMask = GetSampleLocationMask(dimension);
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcAddress, usilSrcAddress, MapMask(uvMask, srcAddress.swizzle), false);
+            FillUSILOperand(srcResource, usilSrcResource, MapMask(dest.swizzle, srcResource.swizzle), false);
+            FillUSILOperand(srcSampler, usilSrcSampler, samplerMask, false);
+
+            usilInst.instructionType = USILInstructionType.Gather4;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilSrcAddress,
+                usilSrcResource,
+                usilSrcSampler,
+                usilSamplerType
+            };
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleGather4C(SHDRInstruction inst)
+        {
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcAddress = inst.operands[1];
+            SHDRInstructionOperand srcResource = inst.operands[2];
+            SHDRInstructionOperand srcSampler = inst.operands[3];
+            SHDRInstructionOperand srcReference = inst.operands[4];
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrcAddress = new USILOperand();
+            USILOperand usilSrcResource = new USILOperand();
+            USILOperand usilSrcSampler = new USILOperand();
+            USILOperand usilSrcReference = new USILOperand();
+            USILOperand usilSamplerType = new USILOperand(0);
+
+            int[] samplerMask = new int[] { 0, 1, 2, 3 };
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
+            int[] uvMask = GetSampleLocationMask(dimension);
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcAddress, usilSrcAddress, MapMask(uvMask, srcAddress.swizzle), false);
+            FillUSILOperand(srcResource, usilSrcResource, MapMask(dest.swizzle, srcResource.swizzle), false);
+            FillUSILOperand(srcSampler, usilSrcSampler, samplerMask, false);
+            FillUSILOperand(srcReference, usilSrcReference, srcReference.swizzle, false);
+
+            usilInst.instructionType = USILInstructionType.Gather4Comparison;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilSrcAddress,
+                usilSrcResource,
+                usilSrcSampler,
+                usilSrcReference,
+                usilSamplerType
+            };
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleLod(SHDRInstruction inst)
+        {
+            SHDRInstructionOperand dest = inst.operands[0];
+            SHDRInstructionOperand srcAddress = inst.operands[1];
+            SHDRInstructionOperand srcResource = inst.operands[2];
+            SHDRInstructionOperand? srcSampler = inst.operands.Count > 3 ? inst.operands[3] : null;
+
+            USILInstruction usilInst = new USILInstruction();
+            USILOperand usilDest = new USILOperand();
+            USILOperand usilSrcAddress = new USILOperand();
+            USILOperand usilSrcResource = new USILOperand();
+            USILOperand usilSrcSampler = new USILOperand();
+            USILOperand usilSamplerType = new USILOperand(0);
+
+            int[] samplerMask = new int[] { 0, 1, 2, 3 };
+            ResourceDimension dimension = _resourceToDimension.TryGetValue(srcResource.arraySizes[0], out var dim) ? dim : ResourceDimension.Unknown;
+            int[] uvMask = GetSampleLocationMask(dimension);
+
+            FillUSILOperand(dest, usilDest, dest.swizzle, false);
+            FillUSILOperand(srcAddress, usilSrcAddress, MapMask(uvMask, srcAddress.swizzle), false);
+            FillUSILOperand(srcResource, usilSrcResource, MapMask(dest.swizzle, srcResource.swizzle), false);
+
+            if (srcSampler != null)
+            {
+                FillUSILOperand(srcSampler, usilSrcSampler, samplerMask, false);
+            }
+            else
+            {
+                usilSrcSampler.operandType = USILOperandType.Null;
+            }
+
+            usilInst.instructionType = USILInstructionType.CalculateLevelOfDetail;
+            usilInst.destOperand = usilDest;
+            usilInst.srcOperands = new List<USILOperand>
+            {
+                usilSrcAddress,
+                usilSrcResource,
+                usilSrcSampler,
+                usilSamplerType
+            };
+
+            Instructions.Add(usilInst);
+        }
+
         private void HandleLd(SHDRInstruction inst)
         {
             SHDRInstructionOperand dest = inst.operands[0]; // The address of the result of the operation.
@@ -1731,11 +1930,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
             USILOperand usilSrcByteOffset = new USILOperand();
             USILOperand usilSrc0 = new USILOperand();
 
-            if (src0.operand == Operand.UnorderedAccessView)
-            {
-                throw new NotSupportedException("uav on ld_structured not supported");
-            }
-            else if (src0.operand == Operand.ThreadGroupSharedMemory)
+            if (src0.operand == Operand.ThreadGroupSharedMemory)
             {
                 throw new NotSupportedException("gsm on ld_structured not supported");
             }
@@ -1747,14 +1942,123 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
             usilInst.instructionType = USILInstructionType.LoadResourceStructured;
 
+            int registerIndex = src0.arraySizes.Length > 0 ? src0.arraySizes[0] : 0;
+            bool isUav = src0.operand == Operand.UnorderedAccessView;
+            int stride = ResolveStructuredStride(registerIndex, isUav);
+            if (stride <= 0)
+            {
+                stride = 16;
+            }
+            USILOperand usilStride = new USILOperand(stride);
+
             usilInst.destOperand = usilDest;
             usilInst.srcOperands = new List<USILOperand>
             {
                 usilSrcAddress,
                 usilSrcByteOffset,
-                usilSrc0
+                usilSrc0,
+                usilStride
             };
 
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleAtomicIAdd(SHDRInstruction inst)
+        {
+            USILInstruction usilInst = new USILInstruction();
+            int operandIndex = 0;
+
+            SHDRInstructionOperand first = inst.operands[0];
+            bool hasDest =
+                first.operand != Operand.Resource &&
+                first.operand != Operand.UnorderedAccessView &&
+                first.operand != Operand.ThreadGroupSharedMemory;
+
+            if (hasDest)
+            {
+                SHDRInstructionOperand dest = inst.operands[operandIndex++];
+                USILOperand usilDest = new USILOperand();
+                FillUSILOperand(dest, usilDest, dest.swizzle, true);
+                usilInst.destOperand = usilDest;
+            }
+            else
+            {
+                usilInst.destOperand = null;
+            }
+
+            SHDRInstructionOperand srcResource = inst.operands[operandIndex++];
+            SHDRInstructionOperand srcAddress = inst.operands[operandIndex++];
+
+            USILOperand usilSrcResource = new USILOperand();
+            USILOperand usilSrcAddress = new USILOperand();
+            FillUSILOperand(srcResource, usilSrcResource, srcResource.swizzle, false);
+            FillUSILOperand(srcAddress, usilSrcAddress, srcAddress.swizzle, true);
+
+            List<USILOperand> srcOperands = new List<USILOperand>
+            {
+                usilSrcResource,
+                usilSrcAddress
+            };
+
+            if (operandIndex < inst.operands.Count)
+            {
+                SHDRInstructionOperand srcValue = inst.operands[operandIndex];
+                USILOperand usilSrcValue = new USILOperand();
+                FillUSILOperand(srcValue, usilSrcValue, srcValue.swizzle, true);
+                srcOperands.Add(usilSrcValue);
+            }
+
+            usilInst.instructionType = USILInstructionType.AtomicAdd;
+            usilInst.srcOperands = srcOperands;
+            usilInst.isIntVariant = true;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleAtomicCounter(SHDRInstruction inst)
+        {
+            USILInstruction usilInst = new USILInstruction();
+            int operandIndex = 0;
+
+            SHDRInstructionOperand first = inst.operands[0];
+            bool hasDest =
+                first.operand != Operand.Resource &&
+                first.operand != Operand.UnorderedAccessView &&
+                first.operand != Operand.ThreadGroupSharedMemory;
+
+            if (hasDest)
+            {
+                SHDRInstructionOperand dest = inst.operands[operandIndex++];
+                USILOperand usilDest = new USILOperand();
+                FillUSILOperand(dest, usilDest, dest.swizzle, true);
+                usilInst.destOperand = usilDest;
+            }
+            else
+            {
+                usilInst.destOperand = null;
+            }
+
+            SHDRInstructionOperand srcCounter = inst.operands[operandIndex];
+            USILOperand usilSrcCounter = new USILOperand();
+            FillUSILOperand(srcCounter, usilSrcCounter, srcCounter.swizzle, false);
+
+            usilInst.instructionType = inst.opcode == Opcode.imm_atomic_alloc
+                ? USILInstructionType.AtomicCounterAlloc
+                : USILInstructionType.AtomicCounterConsume;
+            usilInst.srcOperands = new List<USILOperand> { usilSrcCounter };
+            usilInst.isIntVariant = true;
+
+            Instructions.Add(usilInst);
+        }
+
+        private void HandleSync(SHDRInstruction inst)
+        {
+            USILInstruction usilInst = new USILInstruction
+            {
+                instructionType = USILInstructionType.GroupSync,
+                destOperand = null,
+                srcOperands = new List<USILOperand>()
+            };
             Instructions.Add(usilInst);
         }
 
@@ -2272,9 +2576,154 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Direct
 
         private void HandleResource(SHDRInstruction inst)
         {
+            if (inst.declData == null || inst.declData.operands.Length == 0)
+            {
+                return;
+            }
+
+            SHDRInstructionOperand declOperand = inst.declData.operands[0];
+            int regIndex = declOperand.arraySizes.Length > 0
+                ? declOperand.arraySizes[0]
+                : declOperand.registerNumber;
+
             ResourceDimension dimension = inst.declData.resourceDimension;
-            int regIndex = inst.declData.operands[0].arraySizes[0]; // todo: not always tX
-            _resourceToDimension[regIndex] = dimension;
+            if (dimension == ResourceDimension.Unknown)
+            {
+                if (inst.opcode == Opcode.dcl_resource_raw || inst.opcode == Opcode.dcl_uav_raw)
+                {
+                    dimension = ResourceDimension.raw_buffer;
+                }
+                else if (inst.opcode == Opcode.dcl_resource_structured || inst.opcode == Opcode.dcl_uav_structured)
+                {
+                    dimension = ResourceDimension.structured_buffer;
+                }
+            }
+
+            bool isUav =
+                inst.opcode == Opcode.dcl_uav_typed ||
+                inst.opcode == Opcode.dcl_uav_raw ||
+                inst.opcode == Opcode.dcl_uav_structured;
+
+            if (isUav)
+            {
+                _uavToDimension[regIndex] = dimension;
+            }
+            else
+            {
+                _resourceToDimension[regIndex] = dimension;
+            }
+
+            if (dimension == ResourceDimension.structured_buffer)
+            {
+                int stride = ResolveStructuredStrideFromShaderParams(regIndex, isUav);
+                if (stride <= 0)
+                {
+                    stride = inst.declData.uavBufferSize;
+                }
+
+                if (stride > 0)
+                {
+                    if (isUav)
+                    {
+                        _uavToStructuredStride[regIndex] = stride;
+                    }
+                    else
+                    {
+                        _resourceToStructuredStride[regIndex] = stride;
+                    }
+                }
+            }
+        }
+
+        private int ResolveStructuredStride(int registerIndex, bool isUav)
+        {
+            if (isUav)
+            {
+                if (_uavToStructuredStride.TryGetValue(registerIndex, out int stride))
+                {
+                    return stride;
+                }
+            }
+            else
+            {
+                if (_resourceToStructuredStride.TryGetValue(registerIndex, out int stride))
+                {
+                    return stride;
+                }
+            }
+
+            return ResolveStructuredStrideFromShaderParams(registerIndex, isUav);
+        }
+
+        private int ResolveStructuredStrideFromShaderParams(int registerIndex, bool isUav)
+        {
+            if (_shaderParams == null)
+            {
+                return 0;
+            }
+
+            if (isUav)
+            {
+                UAVParameter? uav = _shaderParams.UAVs.FirstOrDefault(
+                    u => u.Index == registerIndex || u.OriginalIndex == registerIndex);
+                if (uav != null)
+                {
+                    int fromName = ParseStrideFromName(uav.Name);
+                    if (fromName > 0)
+                    {
+                        return fromName;
+                    }
+                }
+            }
+            else
+            {
+                BufferBinding? buffer = _shaderParams.Buffers.FirstOrDefault(b => b.Index == registerIndex);
+                if (buffer != null)
+                {
+                    int fromName = ParseStrideFromName(buffer.Name);
+                    if (fromName > 0)
+                    {
+                        return fromName;
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        private static int ParseStrideFromName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return 0;
+            }
+
+            // Common metadata conventions: _Stride16, _stride16, Stride_16
+            int marker = name.LastIndexOf("stride", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+            {
+                return 0;
+            }
+
+            for (int i = marker + 6; i < name.Length; i++)
+            {
+                if (char.IsDigit(name[i]))
+                {
+                    int start = i;
+                    int end = i + 1;
+                    while (end < name.Length && char.IsDigit(name[end]))
+                    {
+                        end++;
+                    }
+                    if (int.TryParse(name.Substring(start, end - start), out int stride))
+                    {
+                        return stride;
+                    }
+                    break;
+                }
+            }
+
+            return 0;
         }
 
         private void HandleCustomData(SHDRInstruction inst)

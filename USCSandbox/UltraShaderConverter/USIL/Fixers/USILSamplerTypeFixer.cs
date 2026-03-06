@@ -32,13 +32,13 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL.Fixers
                     // USILSamplerMetadder couldn't find sampler metadata, skip
                     if (sampleOperand.operandType == USILOperandType.SamplerRegister)
                     {
-                        break;
+                        continue;
                     }
 
                     // Shouldn't happen, but just in case
                     if (!sampleOperand.metadataNameAssigned)
                     {
-                        break;
+                        continue;
                     }
 
                     if (BUILTIN_SAMPLER_TEXTURE_NAMES.Contains(sampleOperand.metadataName))
@@ -64,6 +64,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL.Fixers
                 USILInstructionType.SampleComparison => 4,
                 USILInstructionType.SampleComparisonLODZero => 4,
                 USILInstructionType.SampleLOD => 4,
+                USILInstructionType.Gather4 => 3,
+                USILInstructionType.Gather4Comparison => 4,
+                USILInstructionType.CalculateLevelOfDetail => 3,
                 _ => -1
             };
         }

@@ -18,6 +18,10 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         BitFieldInsert, //dx: bfi
         BitFieldExtractUnsigned, //dx: ubfe
         BitFieldExtractSigned, //dx: ibfe
+        BitReverse, //dx: bfrev
+        CountBits, //dx: countbits
+        FirstBitHigh, //dx: firstbit_hi/firstbit_shi
+        FirstBitLow, //dx: firstbit_lo
 
         ShiftLeft, //dx: ishl
         ShiftRight, //dx: ishr
@@ -99,10 +103,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
         SampleComparisonLODZero, //dx: sample_c_lz
         SampleLOD, //dx: sample_l
         SampleDerivative, //dx: sample_d
+        Gather4, //dx: gather4
+        Gather4Comparison, //dx: gather4_c
+        CalculateLevelOfDetail, //dx: lod
         LoadResource, //dx: ld
         LoadResourceMultisampled, //dx: ld2dms
         LoadResourceRaw, //dx: ld_raw
         LoadResourceStructured, //dx: ld_structured
+        AtomicAdd, //dx: atomic_iadd
+        AtomicCounterAlloc, //dx: imm_atomic_alloc
+        AtomicCounterConsume, //dx: imm_atomic_consume
+        GroupSync, //dx: sync
 
         // artifical instructions
         GetDimensions, //dx: --- (resinfo/sampleinfo)

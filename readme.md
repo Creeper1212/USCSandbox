@@ -1,70 +1,75 @@
-# USCSandbox
+﻿# USCSandbox
 
-**USCSandbox** is a high-performance, headless Unity shader decompiler designed to translate compiled shader binaries (DXBC/NVN) back into readable, compilable Unity HLSL. Based on an enhanced version of the Ultra Shader Converter (USC), this tool is engineered to handle the complexities of modern Unity versions, including **Unity 6**, with an emphasis on **high-fidelity code generation and zero data loss**.
+USCSandbox is a command-line shader decompiler for Unity assets/bundles.
+This README focuses on how to build and run it with working example commands.
 
-## 🚀 Key Features
+## Requirements
 
-*   **100% Code Completeness (New)**: Even when Unity strips reflection metadata, USCSandbox infers exact resource dimensions (Cube, 3D, 2DArray, Structured, Raw) directly from bytecode instructions. This guarantees compile-ready fallback declarations (e.g., `TextureCube<float4>`) instead of generic or broken types.
-*   **Universal Optimizer Execution (New)**: High-level math patterns (like `normalize()`, `length()`, `lerp()`, and Unity macros) are aggressively reconstructed across *all* shader variants, regardless of missing parameter data.
-*   **Unity 6 & 2022.x LTS Ready**: Robust handling of Merged Keyword arrays and External Parameter Blobs introduced in the latest engine iterations.
-*   **Intelligent Variant Grouping**: Eliminates the "million-line shader" problem. It analyzes all variants within a pass and automatically generates compact code using `#if`, `#elif`, and `#endif` preprocessor directives.
-*   **Full Nintendo Switch (NVN) Support**: Utilizes the Ryujinx IR translation layer to provide functional decompilation for Switch binaries.
-*   **Culture-Invariant Output**: Prevents formatting corruption; ensures floating-point numbers consistently use the `.` separator regardless of the host system's regional settings.
-*   **Segmented Blob Parsing**: Correctly handles segmented shader storage (Unity 2019.3+) which previously caused crashes in older decompilers.
-*   **Comprehensive Logging**: Features structured, timestamped file logging (`logs/session-*.log`) and isolated per-shader logs, allowing for easy debugging without breaking batch extraction runs.
+- Windows x64
+- .NET SDK 8.0+
+- `classdata.tpk` available in the same folder as `USCSandbox.exe`
 
-## 🛠 Supported Architectures
+## Build (separate files, all dependencies)
 
-*   **DirectX 11 (PC)**: Full support for Shader Model 4.0 and 5.0. Includes advanced opcode coverage (`sample_b`, `bfi`, `ubfe`, `ld_raw`, `ld_structured`, etc.).
-*   **Nintendo Switch (NVN)**: Functional translation via Ryujinx.Graphics.Shader.
+Run from repo root (`G:\New folder\My AssetRipper\USCSandbox`):
 
-## 💻 How to Use
+```powershell
+dotnet publish "USCSandbox\USCSandbox.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -o "publish\release_win-x64_separate"
+```
 
-The tool is a standalone CLI executable. Ensure `classdata.tpk` is located next to the executable before running.
+Output executable:
 
-```bash
-USCS [bundle path] [assets path] [shader path id] <--platform> <--version> <--all>
+`publish\release_win-x64_separate\USCSandbox.exe`
+
+## Command Syntax
+
+```powershell
+USCSandbox.exe <bundlePath|null> <assetsPathOrCabName> <shaderPathId> [--platform d3d11|Switch] [--version <unityVersion>] [--all]
 ```
 
 ### Arguments
-*   `bundle path`: Path to the `.unity3d` or `.bundle` file. Use `null` if opening an `.assets` file directly.
-*   `assets path`: The internal name of the assets file (e.g., `CAB-xxx`) or the relative path to a `.assets` file.
-*   `shader path id`: The PathID of the target shader.
-*   `--platform`: `d3d11` (default) or `Switch`.
-*   `--version`: Required if the asset version is stripped. Supports up to Unity 6 (e.g., `6000.0.1f1`).
-*   `--all`: Decompiles every shader found in the specified file.
 
-### Examples
+- `bundlePath|null`: Path to `.bundle`/`.unity3d`, or `null` when opening `.assets` directly.
+- `assetsPathOrCabName`: CAB name inside bundle (example: `CAB-1234`) or `.assets` file path.
+- `shaderPathId`: Target shader PathID (use `0` when using `--all`).
+- `--platform`: `d3d11` (default) or `Switch`.
+- `--version`: Unity version string when version metadata is stripped (example: `6000.0.1f1`).
+- `--all`: Decompile every shader found in the specified file.
 
-**Decompile a specific Unity 6 shader from a bundle:**
-```bash
-uscsandbox Game.bundle CAB-1234 55 --version 6000.0.1f1
+## Example Commands
+
+### 1) Decompile one shader from a bundle (D3D11)
+
+```powershell
+.\USCSandbox.exe "Game.bundle" "CAB-1234" 55 --version 6000.0.1f1
 ```
 
-**Decompile all shaders from a shared assets file:**
-```bash
-uscsandbox null sharedassets0.assets 0 --all --version 2022.3.2f1
+### 2) Decompile all shaders from a direct `.assets` file
+
+```powershell
+.\USCSandbox.exe null "sharedassets0.assets" 0 --all --version 2022.3.2f1
 ```
 
-## 🧠 Technical Overview
+### 3) Decompile one shader using Switch/NVN pipeline
 
-1.  **Metadata Extraction & Merging**: The tool parses the `SerializedShader` metadata to map hardware registers to human-readable names. It dynamically merges blob-local parameters with global "Common" parameters. 
-2.  **Bytecode Type Inference**: When metadata is missing, USCSandbox scans the DXBC headers (`dcl_resource`) to accurately type resources as `Texture2DArray`, `TextureCube`, or `StructuredBuffer` rather than defaulting to raw data buffers.
-3.  **USIL Translation**: Compiled bytecode is lifted into **Ultra Shader Intermediate Language (USIL)**.
-4.  **Optimizer & Fixer Pipeline**:
-    *   **High-Level Math**: Reconstructs low-level math clusters back into readable HLSL operations.
-    *   **SamplerFixer**: Identifies internal Unity textures (e.g., `unity_Lightmap`) to assign correct sampler states.
-    *   **DimensionsFixer**: Consolidates multiple `resinfo` queries into standard HLSL `GetDimensions` calls.
-5.  **HLSL Reconstruction**: USIL is converted into a structured `.shader` file containing standard `Properties`, `SubShader`, and `Pass` blocks, cleanly wrapped in keyword `#if` blocks.
+```powershell
+.\USCSandbox.exe "Game.bundle" "CAB-1234" 55 --platform Switch --version 2021.3.35f1
+```
 
-## ⚖️ License & Credits
+### 4) Run from published output folder
 
-Licensed under **GPL v3**.
+```powershell
+cd "G:\New folder\My AssetRipper\USCSandbox\publish\release_win-x64_separate"
+.\USCSandbox.exe null "sharedassets0.assets" 0 --all --version 2022.3.2f1
+```
 
-This project is a standalone rework of the shader exporter found in [AssetRipper](https://github.com/AssetRipper/AssetRipper). It integrates research and logic from:
-*   [uTinyRipper](https://github.com/mafaca/UtinyRipper) (Initial parsing concepts)
-*   [Ryujinx](https://github.com/Ryujinx/Ryujinx) (NVN translation logic)
-*   [3dmigoto](https://github.com/bo3b/3Dmigoto) (DirectX disassembly foundations)
+## Output
 
----
-*Note: This project is an independent optimization fork. For support with modern Unity 6 assets, please use the latest builds from this repository.*
+- Decompiled shader files are written by the tool into its configured output flow.
+- Session logs are written under `logs\` (for example `logs\session-*.log`).
+
+## Quick Troubleshooting
+
+- If startup fails with missing data, verify `classdata.tpk` is next to `USCSandbox.exe`.
+- If a file path has spaces, wrap it in quotes.
+- If shader metadata is stripped, pass `--version` explicitly.

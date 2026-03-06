@@ -182,7 +182,7 @@ namespace USCSandbox.Processor
                 {
                     Logger.Debug($"Loading DX shader bytecode: pass='{passName}', programType={programType}, dataLength={subProg.ProgramData.Length}");
                     converter.LoadDirectXCompiledShader(new MemoryStream(subProg.ProgramData), _platformId, _engVer);
-                    converter.ConvertDxShaderToUShaderProgram();
+                    converter.ConvertDxShaderToUShaderProgram(param);
                 }
                 else if (programType.ToGPUPlatform() == GPUPlatform.Switch)
                 {
@@ -619,6 +619,9 @@ namespace USCSandbox.Processor
                 USILInstructionType.SampleLOD or
                 USILInstructionType.SampleLODBias or
                 USILInstructionType.SampleDerivative or
+                USILInstructionType.Gather4 or
+                USILInstructionType.Gather4Comparison or
+                USILInstructionType.CalculateLevelOfDetail or
                 USILInstructionType.LoadResource or
                 USILInstructionType.LoadResourceMultisampled or
                 USILInstructionType.ResourceDimensionInfo or

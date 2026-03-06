@@ -24,7 +24,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter
 
         public void LoadDirectXCompiledShader(Stream data, GPUPlatform graphicApi, UnityVersion version)
         {
-            int offset = GetDirectXDataOffset(version, graphicApi, data.ReadByte());
+            int headerVersion = data.ReadByte();
+            int offset = GetDirectXDataOffset(version, graphicApi, headerVersion);
+            offset = FindDirectXMagicOffset(data, offset);
             data.Position = offset;
             
             // Read the remainder into a clean stream for DX decompilation
@@ -49,6 +51,70 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter
                 return offset;
             }
             return 0;
+        }
+
+        private static int FindDirectXMagicOffset(Stream data, int assumedOffset)
+        {
+            const uint DXBC_MAGIC = 0x43425844; // 'DXBC' in little endian
+            if (!data.CanSeek || data.Length < 4)
+            {
+                return Math.Max(0, assumedOffset);
+            }
+
+            int maxStart = (int)Math.Max(0, data.Length - 4);
+            int clampedOffset = Math.Clamp(assumedOffset, 0, maxStart);
+
+            if (TryReadUInt32At(data, clampedOffset, out uint directMagic) && directMagic == DXBC_MAGIC)
+            {
+                return clampedOffset;
+            }
+
+            int min = Math.Max(0, clampedOffset - 64);
+            int max = Math.Min(maxStart, clampedOffset + 64);
+
+            for (int delta = 1; delta <= 64; delta++)
+            {
+                int forward = clampedOffset + delta;
+                if (forward <= max &&
+                    TryReadUInt32At(data, forward, out uint forwardMagic) &&
+                    forwardMagic == DXBC_MAGIC)
+                {
+                    return forward;
+                }
+
+                int backward = clampedOffset - delta;
+                if (backward >= min &&
+                    TryReadUInt32At(data, backward, out uint backwardMagic) &&
+                    backwardMagic == DXBC_MAGIC)
+                {
+                    return backward;
+                }
+            }
+
+            return clampedOffset;
+        }
+
+        private static bool TryReadUInt32At(Stream data, int offset, out uint value)
+        {
+            value = 0;
+            if (offset < 0 || offset + 4 > data.Length)
+            {
+                return false;
+            }
+
+            Span<byte> buffer = stackalloc byte[4];
+            long previous = data.Position;
+            data.Position = offset;
+            int read = data.Read(buffer);
+            data.Position = previous;
+
+            if (read != 4)
+            {
+                return false;
+            }
+
+            value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
+            return true;
         }
 
         public void LoadUnityNvnShader(Stream data, GPUPlatform graphicApi, UnityVersion version)
@@ -136,11 +202,11 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.Converter
             }
         }
 
-        public void ConvertDxShaderToUShaderProgram()
+        public void ConvertDxShaderToUShaderProgram(ShaderParams? shaderParams = null)
         {
             if (DxShader == null) throw new Exception($"You need to call {nameof(LoadDirectXCompiledShader)} first!");
 
-            DirectXProgramToUSIL dx2UsilConverter = new DirectXProgramToUSIL(DxShader);
+            DirectXProgramToUSIL dx2UsilConverter = new DirectXProgramToUSIL(DxShader, shaderParams);
             dx2UsilConverter.Convert();
             ShaderProgram = dx2UsilConverter.shader;
         }

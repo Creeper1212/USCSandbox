@@ -41,6 +41,10 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.BitFieldInsert, HandleBitFieldInsert },
                 { USILInstructionType.BitFieldExtractUnsigned, HandleBitFieldExtractUnsigned },
                 { USILInstructionType.BitFieldExtractSigned, HandleBitFieldExtractSigned },
+                { USILInstructionType.BitReverse, HandleBitReverse },
+                { USILInstructionType.CountBits, HandleCountBits },
+                { USILInstructionType.FirstBitHigh, HandleFirstBitHigh },
+                { USILInstructionType.FirstBitLow, HandleFirstBitLow },
                 { USILInstructionType.Minimum, HandleMinimum },
                 { USILInstructionType.Maximum, HandleMaximum },
                 { USILInstructionType.SquareRoot, HandleSquareRoot },
@@ -76,10 +80,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 { USILInstructionType.SampleLOD, HandleSampleLOD },
                 { USILInstructionType.SampleLODBias, HandleSampleLODBias },
                 { USILInstructionType.SampleDerivative, HandleSampleDerivative },
+                { USILInstructionType.Gather4, HandleGather4 },
+                { USILInstructionType.Gather4Comparison, HandleGather4Comparison },
+                { USILInstructionType.CalculateLevelOfDetail, HandleCalculateLevelOfDetail },
                 { USILInstructionType.LoadResource, HandleLoadResource },
                 { USILInstructionType.LoadResourceMultisampled, HandleLoadResource },
                 { USILInstructionType.LoadResourceRaw, HandleLoadResourceRaw },
                 { USILInstructionType.LoadResourceStructured, HandleLoadResourceStructured },
+                { USILInstructionType.AtomicAdd, HandleAtomicAdd },
+                { USILInstructionType.AtomicCounterAlloc, HandleAtomicCounterAlloc },
+                { USILInstructionType.AtomicCounterConsume, HandleAtomicCounterConsume },
+                { USILInstructionType.GroupSync, HandleGroupSync },
                 { USILInstructionType.Discard, HandleDiscard },
                 { USILInstructionType.ResourceDimensionInfo, HandleResourceDimensionInfo },
                 { USILInstructionType.SampleCountInfo, HandleSampleCountInfo },
@@ -373,6 +384,44 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
 
+        private void HandleBitReverse(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = $"reversebits({BuildUIntCast(srcOps[0])})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleCountBits(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = $"countbits({BuildUIntCast(srcOps[0])})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleFirstBitHigh(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string source = inst.isIntUnsigned
+                ? BuildUIntCast(srcOps[0])
+                : BuildNumericCast("int", srcOps[0]);
+            string value = $"firstbithigh({source})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleFirstBitLow(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string source = inst.isIntUnsigned
+                ? BuildUIntCast(srcOps[0])
+                : BuildNumericCast("int", srcOps[0]);
+            string value = $"firstbitlow({source})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
         private void HandleMinimum(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
@@ -408,7 +457,7 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleLogarithm2(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"log({srcOps[0]})";
+            string value = $"log2({srcOps[0]})";
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -416,7 +465,19 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
         private void HandleToThePower(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
-            string value = $"pow({srcOps[0]}, {srcOps[1]})";
+            string value;
+            if (srcOps.Count == 1)
+            {
+                value = $"exp2({srcOps[0]})";
+            }
+            else if (srcOps.Count >= 2 && IsImmediateScalar(srcOps[0], 2f))
+            {
+                value = $"exp2({srcOps[1]})";
+            }
+            else
+            {
+                value = $"pow({srcOps[0]}, {srcOps[1]})";
+            }
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -542,18 +603,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             USILOperand srcOp0 = srcOps[0];
             USILOperand srcOp1 = srcOps[1];
 
-            int op0IntSize = srcOp0.GetValueCount();
-            int op1IntSize = srcOp1.GetValueCount();
+            string valueType = inst.isIntUnsigned ? "uint" : "int";
 
             string op0Text, op1Text;
 
             if (srcOp0.operandType == USILOperandType.ImmediateInt) op0Text = $"{srcOp0}";
-            else op0Text = $"int{op0IntSize}({srcOp0})";
+            else op0Text = BuildNumericCast(valueType, srcOp0);
 
             if (srcOp1.operandType == USILOperandType.ImmediateInt) op1Text = $"{srcOp1}";
-            else op1Text = $"int{op1IntSize}({srcOp1})";
+            else op1Text = BuildUIntCast(srcOp1);
 
-            string value = $"float{op0IntSize}({op0Text} << {op1Text})";
+            string value = $"{op0Text} << {op1Text}";
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -564,18 +624,17 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             USILOperand srcOp0 = srcOps[0];
             USILOperand srcOp1 = srcOps[1];
 
-            int op0IntSize = srcOp0.GetValueCount();
-            int op1IntSize = srcOp1.GetValueCount();
+            string valueType = inst.isIntUnsigned ? "uint" : "int";
 
             string op0Text, op1Text;
 
             if (srcOp0.operandType == USILOperandType.ImmediateInt) op0Text = $"{srcOp0}";
-            else op0Text = $"int{op0IntSize}({srcOp0})";
+            else op0Text = BuildNumericCast(valueType, srcOp0);
 
             if (srcOp1.operandType == USILOperandType.ImmediateInt) op1Text = $"{srcOp1}";
-            else op1Text = $"int{op1IntSize}({srcOp1})";
+            else op1Text = BuildUIntCast(srcOp1);
 
-            string value = $"float{op0IntSize}({op0Text} >> {op1Text})";
+            string value = $"{op0Text} >> {op1Text}";
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
@@ -710,6 +769,38 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             AppendLine($"{comment}{inst.destOperand} = {value};");
         }
 
+        private void HandleGather4(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = $"{srcOps[1]}.Gather({srcOps[2]}, {srcOps[0]})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleGather4Comparison(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value = $"{srcOps[1]}.GatherCmp({srcOps[2]}, {srcOps[0]}, {srcOps[3]})";
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleCalculateLevelOfDetail(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string value;
+            if (srcOps.Count > 2 && srcOps[2].operandType != USILOperandType.Null)
+            {
+                value = $"{srcOps[1]}.CalculateLevelOfDetail({srcOps[2]}, {srcOps[0]})";
+            }
+            else
+            {
+                value = $"0.0 /* missing sampler for CalculateLevelOfDetail({srcOps[1]}) */";
+            }
+            string comment = CommentString(inst);
+            AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
         private void HandleSampleLODBias(USILInstruction inst)
         {
             List<USILOperand> srcOps = inst.srcOperands;
@@ -770,46 +861,112 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
             string resource = srcOps[2].ToString(true);
             USILOperand structureIndexOperand = srcOps[0];
             USILOperand byteOffsetOperand = srcOps[1];
+            int stride = srcOps.Count > 3 && srcOps[3].immValueInt != null && srcOps[3].immValueInt.Length > 0
+                ? Math.Max(1, srcOps[3].immValueInt[0])
+                : 16;
 
             bool hasImmediateByteOffset = byteOffsetOperand.immValueInt != null && byteOffsetOperand.immValueInt.Length > 0;
             int byteOffset = hasImmediateByteOffset ? byteOffsetOperand.immValueInt[0] : 0;
-            int structureAdd = byteOffset / 16;
-            int componentOffset = (byteOffset % 16) / 4;
+            int structureAdd = hasImmediateByteOffset ? byteOffset / stride : 0;
+            int memberByteOffset = hasImmediateByteOffset ? byteOffset % stride : 0;
+            int componentOffset = memberByteOffset / 4;
 
             string structureIndexExpr = structureAdd == 0
                 ? $"{structureIndexOperand}"
                 : $"({structureIndexOperand} + {structureAdd})";
-            string loadExpr = $"{resource}.Load({structureIndexExpr})";
+            string loadExpr = $"{resource}[{structureIndexExpr}]";
 
             int destWidth = Math.Clamp(inst.destOperand?.GetValueCount() ?? 1, 1, 4);
             string value;
-            if (destWidth == 1)
+            if (!hasImmediateByteOffset)
             {
-                int component = hasImmediateByteOffset ? Math.Clamp(componentOffset, 0, 3) : 0;
+                value = $"{loadExpr} /* dynamic structured member byte offset {byteOffsetOperand} */";
+            }
+            else if (memberByteOffset % 4 != 0)
+            {
+                value = $"{loadExpr} /* non-dword structured member byte offset {memberByteOffset} */";
+            }
+            else if (destWidth == 1)
+            {
+                int component = Math.Clamp(componentOffset, 0, 3);
                 value = $"{loadExpr}.{USILConstants.MASK_CHARS[component]}";
             }
             else if (destWidth < 4)
             {
-                int swizzleStart = hasImmediateByteOffset ? Math.Clamp(componentOffset, 0, 3) : 0;
+                int swizzleStart = Math.Clamp(componentOffset, 0, 3);
                 int swizzleCount = Math.Min(destWidth, 4 - swizzleStart);
                 value = $"{loadExpr}.{BuildMaskText(swizzleStart, swizzleCount)}";
+
+                if (swizzleCount != destWidth)
+                {
+                    value += $" /* structured stride {stride} truncated read */";
+                }
             }
             else
             {
                 value = loadExpr;
             }
 
-            if (!hasImmediateByteOffset)
+            if (hasImmediateByteOffset && destWidth == 4 && componentOffset != 0)
             {
-                value += $" /* dynamic structured byte offset {byteOffsetOperand} not fully resolved */";
-            }
-            else if (destWidth == 4 && componentOffset != 0)
-            {
-                value += $" /* structured byte offset {byteOffset} alignment fallback */";
+                value += $" /* structured member byte offset {memberByteOffset} */";
             }
 
             string comment = CommentString(inst);
             AppendLine($"{comment}{inst.destOperand} = {value};");
+        }
+
+        private void HandleAtomicAdd(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string target = $"{srcOps[0]}[{BuildUIntCast(srcOps[1])}]";
+            string addValue = srcOps.Count > 2 ? BuildNumericCast("int", srcOps[2]) : "1";
+            string comment = CommentString(inst);
+
+            if (inst.destOperand != null)
+            {
+                AppendLine($"{comment}InterlockedAdd({target}, {addValue}, {inst.destOperand});");
+            }
+            else
+            {
+                AppendLine($"{comment}InterlockedAdd({target}, {addValue});");
+            }
+        }
+
+        private void HandleAtomicCounterAlloc(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string call = $"{srcOps[0]}.IncrementCounter()";
+            string comment = CommentString(inst);
+            if (inst.destOperand != null)
+            {
+                AppendLine($"{comment}{inst.destOperand} = {call};");
+            }
+            else
+            {
+                AppendLine($"{comment}{call};");
+            }
+        }
+
+        private void HandleAtomicCounterConsume(USILInstruction inst)
+        {
+            List<USILOperand> srcOps = inst.srcOperands;
+            string call = $"{srcOps[0]}.DecrementCounter()";
+            string comment = CommentString(inst);
+            if (inst.destOperand != null)
+            {
+                AppendLine($"{comment}{inst.destOperand} = {call};");
+            }
+            else
+            {
+                AppendLine($"{comment}{call};");
+            }
+        }
+
+        private void HandleGroupSync(USILInstruction inst)
+        {
+            string comment = CommentString(inst);
+            AppendLine($"{comment}GroupMemoryBarrierWithGroupSync();");
         }
 
         private void HandleDiscard(USILInstruction inst)
@@ -1131,6 +1288,14 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.UShader.Functi
                 sb.Append(USILConstants.MASK_CHARS[maskIndex]);
             }
             return sb.ToString();
+        }
+
+        private static bool IsImmediateScalar(USILOperand operand, float value)
+        {
+            return operand.operandType == USILOperandType.ImmediateFloat &&
+                   operand.immValueFloat != null &&
+                   operand.immValueFloat.Length == 1 &&
+                   Math.Abs(operand.immValueFloat[0] - value) < 0.0001f;
         }
 
         private void AppendLine(string line)

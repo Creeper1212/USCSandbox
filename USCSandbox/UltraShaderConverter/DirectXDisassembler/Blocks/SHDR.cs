@@ -754,14 +754,40 @@
                     uavGloballyCoherentAccess = instData & 0x00010000;
                     uavCounter = 0;
                     uavBufferSize = 0;
+                    operands = new SHDRInstructionOperand[1]
+                    {
+                        new SHDRInstructionOperand(reader)
+                    };
                     break;
                 }
                 case Opcode.dcl_uav_structured:
                 {
                     uavGloballyCoherentAccess = instData & 0x00010000;
-                    uavCounter = 0;
-                    uavBufferSize = 0;
-                    //todo
+                    uavCounter = (byte)((instData & 0x00020000) >> 17);
+                    operands = new SHDRInstructionOperand[1]
+                    {
+                        new SHDRInstructionOperand(reader)
+                    };
+                    uavBufferSize = reader.ReadInt32();
+                    break;
+                }
+                case Opcode.dcl_resource_raw:
+                {
+                    resourceDimension = ResourceDimension.raw_buffer;
+                    operands = new SHDRInstructionOperand[1]
+                    {
+                        new SHDRInstructionOperand(reader)
+                    };
+                    break;
+                }
+                case Opcode.dcl_resource_structured:
+                {
+                    resourceDimension = ResourceDimension.structured_buffer;
+                    operands = new SHDRInstructionOperand[1]
+                    {
+                        new SHDRInstructionOperand(reader)
+                    };
+                    uavBufferSize = reader.ReadInt32();
                     break;
                 }
                 case Opcode.dcl_tgsm_structured:

@@ -73,6 +73,9 @@ namespace AssetRipper.Export.Modules.Shaders.UltraShaderConverter.USIL
                 case USILInstructionType.SampleLODBias:
                 case USILInstructionType.SampleComparisonLODZero:
                 case USILInstructionType.SampleDerivative:
+                case USILInstructionType.Gather4:
+                case USILInstructionType.Gather4Comparison:
+                case USILInstructionType.CalculateLevelOfDetail:
                     return true;
                 default:
                     return false;
