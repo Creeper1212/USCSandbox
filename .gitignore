@@ -325,3 +325,33 @@ ASALocalRun/
 
 # Zip releases
 *.zip
+outOLD/Gorilla/Halloween22/HornsSlingshotImpactFX.shader
+ai_studio_code (3).py
+combined_output.txt
+outOLD/Gorilla/CutoffLerpLightmap.shader
+outOLD/Gorilla/DayNightLerpSkyMaterial.shader
+outOLD/Gorilla/Halloween22/CandleFlameWobble.shader
+outOLD/Gorilla/Halloween22/HornsSlingshotElastic.shader
+outOLD/Gorilla/Halloween22/HornsSlingshotProjectile.shader
+outOLD/Gorilla/Particle (Additive).shader
+outOLD/Gorilla/SkyJungle22/Gorilla_SkyJungle_WindTunnelRibbons.shader
+outOLD/GorillaTag/ScryingReveal.shader
+outOLD/GorillaTag/SkyboxLerp.shader
+outOLD/GorillaTag/SnapPiece.shader
+outOLD/GorillaTag/SnapPieceIndirect.shader
+outOLD/GorillaTag/SnapPieceTexArray.shader
+outOLD/GorillaTag/UberShader.shader
+outOLD/GorillaTag/UberShaderNonSRP.shader
+outOLD/GorillaTag/URPScryable.shader
+outOLD/GorillaTag/URPScryGlass.shader
+outOLD/GorillaTag/WaterSurface (GT).shader
+outOLD/Legacy Shaders/Particles/Alpha Blended Premultiply.shader
+outOLD/Legacy Shaders/Particles/Alpha Blended.shader
+outOLD/Particles/Standard Unlit.shader
+outOLD/Standard.shader
+outOLD/TextMeshPro/Distance Field.shader
+outOLD/TextMeshPro/Mobile/Distance Field.shader
+outOLD/Universal Render Pipeline/Lit.shader
+outOLD/Universal Render Pipeline/Particles/Unlit.shader
+outOLD/Unlit/AlphaCrack.shader
+outOLD/Unlit/Texture.shader
