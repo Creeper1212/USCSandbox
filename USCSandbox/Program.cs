@@ -47,6 +47,7 @@ namespace USCSandbox
                 GPUPlatform platform = GPUPlatform.d3d11;
                 UnityVersion? ver = null;
                 bool allSet = false;
+                string? scanPath = null;
 
                 List<string> argList = new();
                 for (var i = 0; i < args.Length; i++)
@@ -68,6 +69,15 @@ namespace USCSandbox
                                 allSet = true;
                                 Logger.Info("Optional argument --all=true");
                                 break;
+                            case "--scan":
+                                if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                                {
+                                    ConsoleUi.Warning("--scan requires a folder path.");
+                                    return;
+                                }
+                                scanPath = args[++i];
+                                Logger.Info($"Optional argument --scan={scanPath}");
+                                break;
                             default:
                                 ConsoleUi.Warning($"Optional argument {arg} is invalid.");
                                 Logger.Warning($"Invalid optional argument: {arg}");
@@ -78,6 +88,24 @@ namespace USCSandbox
                     {
                         argList.Add(arg);
                     }
+                }
+
+                if (scanPath is not null)
+                {
+                    RunAssetFileScan(scanPath);
+                    return;
+                }
+
+                if (argList.Count == 1 && Directory.Exists(argList[0]))
+                {
+                    RunAssetFileScan(argList[0]);
+                    return;
+                }
+
+                if (argList.Count == 0)
+                {
+                    ConsoleUi.Usage();
+                    return;
                 }
 
                 var bundlePath = argList[0];
@@ -273,6 +301,150 @@ namespace USCSandbox
                 Logger.Shutdown();
             }
         }
+
+        private static void RunAssetFileScan(string rootPath)
+        {
+            if (!Directory.Exists(rootPath))
+            {
+                string message = $"Scan path does not exist: {rootPath}";
+                ConsoleUi.Error(message);
+                Logger.Warning(message);
+                return;
+            }
+
+            ConsoleUi.Section("Asset Scan");
+            ConsoleUi.Info($"Root: {rootPath}");
+
+            List<string> bundles = new();
+            List<string> assets = new();
+            List<string> noExtAssets = new();
+
+            foreach (string file in EnumerateFilesSafe(rootPath))
+            {
+                string ext = Path.GetExtension(file);
+                string fileName = Path.GetFileName(file);
+
+                if (IsBundleFile(ext))
+                {
+                    bundles.Add(file);
+                }
+                else if (string.Equals(ext, ".assets", StringComparison.OrdinalIgnoreCase))
+                {
+                    assets.Add(file);
+                }
+                else if (string.IsNullOrEmpty(ext) && IsKnownNoExtensionAsset(fileName))
+                {
+                    noExtAssets.Add(file);
+                }
+            }
+
+            bundles.Sort(StringComparer.OrdinalIgnoreCase);
+            assets.Sort(StringComparer.OrdinalIgnoreCase);
+            noExtAssets.Sort(StringComparer.OrdinalIgnoreCase);
+
+            ConsoleUi.Section($"Bundles ({bundles.Count})");
+            foreach (string path in bundles)
+            {
+                ConsoleUi.ListItem(Path.GetRelativePath(rootPath, path));
+            }
+
+            ConsoleUi.Section($"Assets ({assets.Count})");
+            foreach (string path in assets)
+            {
+                ConsoleUi.ListItem(Path.GetRelativePath(rootPath, path));
+            }
+
+            ConsoleUi.Section($"No-Extension Asset Files ({noExtAssets.Count})");
+            foreach (string path in noExtAssets)
+            {
+                ConsoleUi.ListItem(Path.GetRelativePath(rootPath, path));
+            }
+
+            if (bundles.Count == 0 && assets.Count == 0 && noExtAssets.Count == 0)
+            {
+                ConsoleUi.Warning("No Unity bundle/asset files were found.");
+                return;
+            }
+
+            ConsoleUi.Section("Quick Commands");
+            if (bundles.Count > 0)
+            {
+                ConsoleUi.ListItem($"USCSandbox \"{bundles[0]}\"");
+            }
+            if (assets.Count > 0)
+            {
+                ConsoleUi.ListItem($"USCSandbox null \"{assets[0]}\" 0 --all");
+            }
+            if (bundles.Count > 0)
+            {
+                ConsoleUi.ListItem($"USCSandbox \"{bundles[0]}\" \"sharedassets0.assets\" 0 --all");
+            }
+        }
+
+        private static IEnumerable<string> EnumerateFilesSafe(string rootPath)
+        {
+            Stack<string> directories = new();
+            directories.Push(rootPath);
+
+            while (directories.Count > 0)
+            {
+                string current = directories.Pop();
+
+                string[] files;
+                try
+                {
+                    files = Directory.GetFiles(current);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < files.Length; i++)
+                {
+                    yield return files[i];
+                }
+
+                string[] subDirectories;
+                try
+                {
+                    subDirectories = Directory.GetDirectories(current);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < subDirectories.Length; i++)
+                {
+                    directories.Push(subDirectories[i]);
+                }
+            }
+        }
+
+        private static bool IsBundleFile(string extension)
+        {
+            return string.Equals(extension, ".unity3d", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(extension, ".bundle", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(extension, ".assetbundle", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(extension, ".ab", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsKnownNoExtensionAsset(string fileName)
+        {
+            if (string.Equals(fileName, "globalgamemanagers", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (string.Equals(fileName, "maindata", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (fileName.StartsWith("level", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            return false;
+        }
     }
 }
-
